@@ -34,6 +34,34 @@ function coerce(el) {
   return raw;
 }
 
+// ---------------------------------------------------------------- globals
+let sectorList = [];          // [{name, abbreviation}]
+const systemsCache = {};      // sector -> [{hex, name, uwp}]
+const systemsPending = {};    // sector -> Promise
+
+// ---------------------------------------------------------------- sector/system data
+async function loadSectors() {
+  try {
+    const resp = await fetch("/api/sectors");
+    const data = await resp.json();
+    sectorList = (data.sectors || []).filter((s) => s && s.name);
+  } catch (e) {
+    console.error("Failed to load sectors:", e);
+    sectorList = [];
+  }
+}
+
+function getSystems(sector) {
+  if (systemsCache[sector]) return Promise.resolve(systemsCache[sector]);
+  if (systemsPending[sector]) return systemsPending[sector];
+  systemsPending[sector] = fetch(`/api/systems?sector=${encodeURIComponent(sector)}`)
+    .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then((d) => { systemsCache[sector] = d.systems || []; return systemsCache[sector]; })
+    .catch(() => { console.error("systems fetch failed for", sector); return []; })
+    .finally(() => { delete systemsPending[sector]; });
+  return systemsPending[sector];
+}
+
 // ---------------------------------------------------------------- preset
 function emptyShip() {
   return {
@@ -234,10 +262,11 @@ function shipHTML(s, i) {
 
 function renderList(containerId, arr) {
   const list = { stops: "stop", avoid: "avoid", fueldumps: "fueldump" }[containerId];
+  const base = containerId === "fueldumps" ? "fuel_dumps" : containerId;
   $(containerId).innerHTML = arr.map((it, j) => `
     <div class="list-row">
-      <input data-path="${containerId === "fueldumps" ? "fuel_dumps" : containerId}.${j}.sector" value="${esc(it.sector)}" placeholder="Sector">
-      <input data-path="${containerId === "fueldumps" ? "fuel_dumps" : containerId}.${j}.hex" value="${esc(it.hex)}" placeholder="Hex">
+      <select data-path="${base}.${j}.sector" data-kind="sector"></select>
+      <select data-path="${base}.${j}.hex" data-kind="hex"></select>
       <button class="danger" data-action="remove-${list}" data-index="${j}">✕</button>
     </div>`).join("");
 }
@@ -245,6 +274,7 @@ function renderList(containerId, arr) {
 function syncScalars() {
   document.querySelectorAll("[data-path]").forEach((el) => {
     if (el.closest("#ships") || el.closest("#stops") || el.closest("#avoid") || el.closest("#fueldumps")) return;
+    if (el.tagName === "SELECT") return; // sector/system selects handled by populate
     const v = getByPath(state, el.dataset.path);
     if (el.type === "checkbox") el.checked = !!v;
     else el.value = (v === null || v === undefined) ? "" : v;
@@ -257,6 +287,45 @@ function render() {
   renderList("avoid", state.avoid);
   renderList("fueldumps", state.fuel_dumps);
   syncScalars();
+  populateSectorSelects();
+  populateHexSelects();
+}
+
+// ---------------------------------------------------------------- dropdowns
+function populateSectorSelects() {
+  document.querySelectorAll('select[data-kind="sector"]').forEach((el) => {
+    const current = getByPath(state, el.dataset.path);
+    const opts = ['<option value="">— sector —</option>']
+      .concat(sectorList.map((s) =>
+        `<option value="${esc(s.name)}" ${s.name === current ? "selected" : ""}>${esc(s.name)}</option>`))
+      .join("");
+    el.innerHTML = opts;
+    el.value = current || "";
+  });
+}
+
+async function populateHexSelect(hexEl) {
+  const sectorPath = hexEl.dataset.path.replace(/\.hex$/, ".sector");
+  const sector = getByPath(state, sectorPath);
+  const currentHex = getByPath(state, hexEl.dataset.path);
+  let opts = '<option value="">— system —</option>';
+  if (sector) {
+    const systems = await getSystems(sector);
+    if (!document.body.contains(hexEl)) return;          // stale element
+    if (getByPath(state, sectorPath) !== sector) return;  // sector changed under us
+    if (systems.length === 0) {
+      opts = '<option value="">(no systems found)</option>';
+    } else {
+      opts += systems.map((s) =>
+        `<option value="${s.hex}" ${s.hex === currentHex ? "selected" : ""}>${s.hex} · ${esc(s.name)}</option>`).join("");
+    }
+  }
+  hexEl.innerHTML = opts;
+  hexEl.value = currentHex || "";
+}
+
+function populateHexSelects() {
+  document.querySelectorAll('select[data-kind="hex"]').forEach(populateHexSelect);
 }
 
 // ---------------------------------------------------------------- events
@@ -266,6 +335,14 @@ document.addEventListener("input", (e) => {
 });
 document.addEventListener("change", (e) => {
   const el = e.target;
+  if (el.dataset && el.dataset.kind === "sector") {
+    // state.sector is already updated by the input handler; reset + refill hexes
+    const hexPath = el.dataset.path.replace(/\.sector$/, ".hex");
+    setByPath(state, hexPath, "");
+    const hexEl = document.querySelector(`select[data-kind="hex"][data-path="${hexPath}"]`);
+    if (hexEl) populateHexSelect(hexEl);
+    return;
+  }
   if (el.type === "checkbox" && el.dataset && el.dataset.path) {
     setByPath(state, el.dataset.path, el.checked);
   }
@@ -293,6 +370,52 @@ document.addEventListener("click", (e) => {
     case "add-fueldump": state.fuel_dumps.push({ sector: "", hex: "" }); render(); break;
     case "remove-fueldump": state.fuel_dumps.splice(i, 1); render(); break;
   }
+});
+
+// ---------------------------------------------------------------- fleet save/load
+const FLEETS_KEY = "travellerweb.fleets";
+const loadFleets = () => {
+  try { return JSON.parse(localStorage.getItem(FLEETS_KEY)) || {}; } catch (_) { return {}; }
+};
+const persistFleets = (f) => localStorage.setItem(FLEETS_KEY, JSON.stringify(f));
+
+function refreshFleetSelect() {
+  const fleets = loadFleets();
+  const names = Object.keys(fleets).sort();
+  $("fleet-select").innerHTML = '<option value="">— saved fleets —</option>' +
+    names.map((n) => `<option value="${esc(n)}">${esc(n)} (${fleets[n].length} ship${fleets[n].length === 1 ? "" : "s"})</option>`).join("");
+}
+
+$("save-fleet").addEventListener("click", () => {
+  const name = $("fleet-name").value.trim();
+  if (!name) return alert("Enter a fleet name first");
+  if (!state.ships.length) return alert("Nothing to save — add some ships first");
+  const fleets = loadFleets();
+  fleets[name] = deepCopy(state.ships);
+  persistFleets(fleets);
+  refreshFleetSelect();
+  $("fleet-select").value = name;
+  $("fleet-name").value = "";
+});
+
+$("load-fleet").addEventListener("click", () => {
+  const name = $("fleet-select").value;
+  if (!name) return;
+  const fleets = loadFleets();
+  if (fleets[name]) {
+    state.ships = deepCopy(fleets[name]);
+    render();
+  }
+});
+
+$("delete-fleet").addEventListener("click", () => {
+  const name = $("fleet-select").value;
+  if (!name) return;
+  if (!confirm(`Delete saved fleet "${name}"?`)) return;
+  const fleets = loadFleets();
+  delete fleets[name];
+  persistFleets(fleets);
+  refreshFleetSelect();
 });
 
 // ---------------------------------------------------------------- actions
@@ -380,4 +503,9 @@ function renderResults(data) {
 $("plan-btn").addEventListener("click", planRoute);
 
 // ---------------------------------------------------------------- init
-render();
+async function init() {
+  await loadSectors();
+  refreshFleetSelect();
+  render();
+}
+init();

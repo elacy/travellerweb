@@ -42,6 +42,24 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/sectors")
+def api_sectors():
+    try:
+        sectors = planner.list_sectors(CACHE_DIR)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Unable to load sectors: {exc}")
+    return {"sectors": sectors}
+
+
+@app.get("/api/systems")
+def api_systems(sector: str):
+    try:
+        systems = planner.list_systems(sector, CACHE_DIR)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Unable to load systems for '{sector}': {exc}")
+    return {"sector": sector, "systems": systems}
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))

@@ -11,6 +11,7 @@ from urllib.parse import urlparse, parse_qs
 import pulp
 import random
 import re
+import time
 
 AVERAGE_D6 = 3.5
 
@@ -184,6 +185,19 @@ class TradeResult:
         self.table = table
 
 
+def hex_distance(x1, y1, x2, y2):
+    # Traveller Map global hex grid uses "even-q" offset (even columns shifted
+    # down) — verified empirically against the sector-local odd-q distances.
+    # Using WorldX/WorldY lets us measure distance ACROSS sector boundaries.
+    def to_cube(col, row):
+        z = row - (col - (col & 1)) // 2
+        return col, -col - z, z
+
+    ax, ay, az = to_cube(x1, y1)
+    bx, by, bz = to_cube(x2, y2)
+    return max(abs(ax - bx), abs(ay - by), abs(az - bz))
+
+
 class World:
     def __init__(self, data, data_loader) -> None:
         uwp = data["UWP"]
@@ -304,7 +318,7 @@ class World:
 
         
     def distance(self, other_world):
-        return self.sector_hex.distance(other_world.sector_hex)
+        return hex_distance(self.x, self.y, other_world.x, other_world.y)
     
     def passengers(self, other_world, ship, starting_world, date):
         distance = self.distance(other_world)
@@ -713,6 +727,19 @@ class SectorHex:
 NEU_BAYERN = [SectorHex("Reft", "1822"), SectorHex("Reft", "1923")]
 AMONDIAGE = [SectorHex("Reft", "2325"), SectorHex("Reft", "2225")]
 
+def _get(url, attempts=3, timeout=30):
+    last = None
+    for i in range(attempts):
+        try:
+            r = requests.get(url, timeout=timeout)
+            r.raise_for_status()
+            return r
+        except Exception as e:  # noqa: BLE001
+            last = e
+            time.sleep(1.5 * (i + 1))
+    raise last
+
+
 class DataLoader:
     def __init__(self, max_jump, data_dir="data", cache_dir="cache") -> None:
         self.__world_cache = dict()
@@ -762,8 +789,8 @@ class DataLoader:
             with open(file_name, 'r') as file:
                 return json.load(file)
 
-        r = requests.get(f'https://travellermap.com/api/jumpworlds?sector={sector}&hex={hex}&jump={max_jump}')
-        jump_data = r.json()
+        url = f'https://travellermap.com/api/jumpworlds?sector={requests.utils.quote(sector)}&hex={hex}&jump={max_jump}'
+        jump_data = _get(url).json()
 
         with open(file_name, 'w') as f:
             json.dump(jump_data, f)
@@ -1333,3 +1360,81 @@ def plan(config):
             "percentage_increase": round(percentage_increase, 4),
         },
     }
+
+
+
+# ---------------------------------------------------------------- sector & system data
+SECTOR_LIST_URL = "https://travellermap.com/api/universe"
+SECTOR_DATA_URL = "https://travellermap.com/api/sec?sector={}"
+
+_UWP_RE = re.compile(r"[A-HX?][0-9A-Z?]{6}-[0-9A-Z?]")
+
+
+def parse_sec_worlds(text):
+    worlds = []
+    for line in text.splitlines():
+        line = line.rstrip("\r")
+        if len(line) < 5 or not line[:4].isdigit():
+            continue
+        hex_ = line[0:4]
+        rest = line[4:]
+        m = _UWP_RE.search(rest)
+        if m:
+            name = rest[:m.start()].strip()
+            uwp = m.group(0)
+        else:
+            name = rest.strip()
+            uwp = ""
+        worlds.append({"hex": hex_, "name": name, "uwp": uwp})
+    return worlds
+
+
+def list_sectors(cache_dir, ttl=86400):
+    cache_file = os.path.join(cache_dir, "universe-sectors.json")
+    if os.path.isfile(cache_file) and (time.time() - os.path.getmtime(cache_file)) < ttl:
+        try:
+            with open(cache_file, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    r = _get(SECTOR_LIST_URL)
+    sectors = []
+    for s in r.json().get("Sectors", []):
+        if s.get("Milieu") == "M1105" and "OTU" in (s.get("Tags") or ""):
+            names = s.get("Names") or []
+            name = names[0]["Text"] if names else (s.get("Abbreviation") or "")
+            sectors.append({"name": name, "abbreviation": s.get("Abbreviation", "")})
+
+    seen = set()
+    out = []
+    for s in sectors:
+        if s["name"] not in seen:
+            seen.add(s["name"])
+            out.append(s)
+    out.sort(key=lambda x: x["name"].lower())
+
+    Path(cache_dir).mkdir(parents=True, exist_ok=True)
+    with open(cache_file, "w") as f:
+        json.dump(out, f)
+    return out
+
+
+def list_systems(sector, cache_dir):
+    slug = re.sub(r"[^a-z0-9]+", "-", sector.lower()).strip("-") or "sector"
+    cache_file = os.path.join(cache_dir, f"sector-{slug}.json")
+    if os.path.isfile(cache_file):
+        try:
+            with open(cache_file, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    r = _get(SECTOR_DATA_URL.format(requests.utils.quote(sector)))
+    worlds = parse_sec_worlds(r.text)
+    worlds.sort(key=lambda w: w["hex"])
+
+    Path(cache_dir).mkdir(parents=True, exist_ok=True)
+    with open(cache_file, "w") as f:
+        json.dump(worlds, f)
+    return worlds

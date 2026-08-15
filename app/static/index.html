@@ -25,16 +25,23 @@
 
     <section id="tab-form" class="tab-panel">
       <h2>Fleet</h2>
+      <div class="fleet-bar">
+        <input id="fleet-name" placeholder="Fleet name">
+        <button id="save-fleet" class="primary">Save fleet</button>
+        <select id="fleet-select"></select>
+        <button id="load-fleet">Load</button>
+        <button id="delete-fleet" class="danger">Delete</button>
+      </div>
       <div id="ships"></div>
       <button id="add-ship" class="ghost">+ Add ship</button>
 
       <h2>Route</h2>
       <div class="grid route-grid">
         <label>Sector
-          <input id="start-sector" data-path="start.sector" placeholder="Trojan Reach">
+          <select data-path="start.sector" data-kind="sector"></select>
         </label>
-        <label>Hex
-          <input id="start-hex" data-path="start.hex" placeholder="2221">
+        <label>System (hex)
+          <select data-path="start.hex" data-kind="hex"></select>
         </label>
         <label>Start year
           <input type="number" data-path="start_date.year">
