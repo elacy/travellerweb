@@ -317,7 +317,7 @@ async function populateHexSelect(hexEl) {
       opts = '<option value="">(no systems found)</option>';
     } else {
       opts += systems.map((s) =>
-        `<option value="${s.hex}" ${s.hex === currentHex ? "selected" : ""}>${s.hex} · ${esc(s.name)}</option>`).join("");
+        `<option value="${s.hex}" ${s.hex === currentHex ? "selected" : ""}>${esc(s.name || s.hex)}</option>`).join("");
     }
   }
   hexEl.innerHTML = opts;

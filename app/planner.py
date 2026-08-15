@@ -1432,7 +1432,8 @@ def list_systems(sector, cache_dir):
 
     r = _get(SECTOR_DATA_URL.format(requests.utils.quote(sector)))
     worlds = parse_sec_worlds(r.text)
-    worlds.sort(key=lambda w: w["hex"])
+    # alphabetical by name (blank-name worlds sink to the bottom, hex as tiebreaker)
+    worlds.sort(key=lambda w: (not w["name"].lower(), w["name"].lower(), w["hex"]))
 
     Path(cache_dir).mkdir(parents=True, exist_ok=True)
     with open(cache_file, "w") as f:
