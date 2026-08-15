@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TravellerWeb — Trade Route Planner</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>TravellerWeb</h1>
+    <span class="subtitle">Trade route planner — Traveller RPG</span>
+  </header>
+
+  <main>
+    <section class="preset-bar">
+      <button id="load-preset" class="primary">Load default fleet (Pirates of Drinax)</button>
+      <button id="clear-all">Clear</button>
+    </section>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="form">Form</button>
+      <button class="tab" data-tab="json">JSON</button>
+    </nav>
+
+    <section id="tab-form" class="tab-panel">
+      <h2>Fleet</h2>
+      <div id="ships"></div>
+      <button id="add-ship" class="ghost">+ Add ship</button>
+
+      <h2>Route</h2>
+      <div class="grid route-grid">
+        <label>Sector
+          <input id="start-sector" data-path="start.sector" placeholder="Trojan Reach">
+        </label>
+        <label>Hex
+          <input id="start-hex" data-path="start.hex" placeholder="2221">
+        </label>
+        <label>Start year
+          <input type="number" data-path="start_date.year">
+        </label>
+        <label>Start day
+          <input type="number" data-path="start_date.day">
+        </label>
+        <label>Starting capital (Cr)
+          <input type="number" data-path="capital">
+        </label>
+        <label>Uncut profits (Cr)
+          <input type="number" data-path="uncut_profits" value="0">
+        </label>
+        <label>Max profit (optional)
+          <input type="number" data-path="max_profit" placeholder="blank = none">
+        </label>
+        <label>Max duration, weeks (optional)
+          <input type="number" data-path="max_duration" placeholder="blank = none">
+        </label>
+      </div>
+
+      <div class="route-lists">
+        <div class="list-block">
+          <h3>Stops <button class="ghost small" id="add-stop">+</button></h3>
+          <div id="stops"></div>
+        </div>
+        <div class="list-block">
+          <h3>Avoid <button class="ghost small" id="add-avoid">+</button></h3>
+          <div id="avoid"></div>
+        </div>
+        <div class="list-block">
+          <h3>Fuel dumps <button class="ghost small" id="add-fueldump">+</button></h3>
+          <div id="fueldumps"></div>
+        </div>
+      </div>
+
+      <button id="plan-btn" class="primary big">Plan route</button>
+    </section>
+
+    <section id="tab-json" class="tab-panel" hidden>
+      <p class="hint">Edit the raw configuration as JSON. <em>Load JSON</em> populates the form; <em>Export from form</em> reads the current form state.</p>
+      <textarea id="json-editor" spellcheck="false"></textarea>
+      <div class="json-actions">
+        <button id="load-json" class="primary">Load JSON</button>
+        <button id="export-json" class="ghost">Export from form</button>
+      </div>
+    </section>
+
+    <section id="results" hidden>
+      <h2>Results</h2>
+      <div id="summary"></div>
+      <div id="error-box" class="error" hidden></div>
+      <div id="route-output"></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

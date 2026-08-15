@@ -1,0 +1,78 @@
+[
+    {
+        "roll": 2,
+        "lots": 1
+    },
+    {
+        "roll": 3,
+        "lots": 1
+    },
+    {
+        "roll": 4,
+        "lots": 2
+    },
+    {
+        "roll": 5,
+        "lots": 2
+    },
+    {
+        "roll": 6,
+        "lots": 3
+    },
+    {
+        "roll": 7,
+        "lots": 3
+    },
+    {
+        "roll": 8,
+        "lots": 3
+    },
+    {
+        "roll": 9,
+        "lots": 4
+    },
+    {
+        "roll": 10,
+        "lots": 4
+    },
+    {
+        "roll": 11,
+        "lots": 4
+    },
+    {
+        "roll": 12,
+        "lots": 5
+    },
+    {
+        "roll": 13,
+        "lots": 5
+    },
+    {
+        "roll": 14,
+        "lots": 5
+    },
+    {
+        "roll": 15,
+        "lots": 6
+    },
+    {
+        "roll": 16,
+        "lots": 6
+    },
+    {
+        "roll": 17,
+        "lots": 7
+    },
+    {
+        "roll": 18,
+        "lots": 8
+    },
+    {
+        "roll": 19,
+        "lots": 9
+    },
+    {
+        "roll": 20,
+        "lots": 10
+    }
+]

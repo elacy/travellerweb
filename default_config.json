@@ -1,0 +1,291 @@
+{
+  "ships": [
+    {
+      "name": "Vhurg",
+      "monthly_maint": 4513,
+      "fuel_per_jump": 20,
+      "max_jump": 2,
+      "fuel_tank": 42,
+      "cargo": 25,
+      "cargo_fuel": 0,
+      "berths": [
+        {
+          "type": "standard",
+          "number": 8
+        },
+        {
+          "type": "low",
+          "number": 8
+        }
+      ],
+      "crew": [
+        {
+          "name": "Carla Sagan",
+          "salary": 0,
+          "passage": "middle"
+        },
+        {
+          "name": "Talahasee of Tort",
+          "salary": 0,
+          "passage": "middle"
+        },
+        {
+          "name": "Silent Unter",
+          "salary": 2000,
+          "passage": "middle"
+        },
+        {
+          "name": "Jim Cheese",
+          "salary": 6000,
+          "passage": "middle"
+        },
+        {
+          "name": "Old Jaek",
+          "salary": 3000,
+          "passage": "middle"
+        }
+      ],
+      "contract": {
+        "type": "drinax"
+      },
+      "max_steward": 0,
+      "max_broker": 3,
+      "accepts_passengers": false,
+      "banned_allegiances": []
+    },
+    {
+      "name": "Mercifuge",
+      "monthly_maint": 8235,
+      "fuel_per_jump": 40,
+      "max_jump": 2,
+      "fuel_tank": 82,
+      "cargo": 199,
+      "cargo_fuel": 0,
+      "berths": [
+        {
+          "type": "standard",
+          "number": 4
+        }
+      ],
+      "crew": [],
+      "contract": {
+        "type": "none"
+      },
+      "max_steward": 0,
+      "max_broker": 3,
+      "accepts_passengers": false,
+      "banned_allegiances": []
+    },
+    {
+      "name": "Ambush Frigate",
+      "monthly_maint": 27259,
+      "fuel_per_jump": 40,
+      "max_jump": 2,
+      "fuel_tank": 120,
+      "cargo": 101,
+      "cargo_fuel": 0,
+      "berths": [
+        {
+          "type": "high",
+          "number": 1
+        },
+        {
+          "type": "standard",
+          "number": 10
+        },
+        {
+          "type": "low",
+          "number": 10
+        }
+      ],
+      "crew": [
+        {
+          "name": "Cassius Hart",
+          "salary": 0,
+          "passage": "middle"
+        },
+        {
+          "name": "Hyacinth Argona",
+          "salary": 0,
+          "passage": "middle"
+        },
+        {
+          "name": "Scarr",
+          "salary": 2000,
+          "passage": "middle"
+        },
+        {
+          "name": "Gargoyle",
+          "salary": 2000,
+          "passage": "middle"
+        },
+        {
+          "name": "Garginine",
+          "salary": 2000,
+          "passage": "middle"
+        },
+        {
+          "name": "Brick",
+          "salary": 2000,
+          "passage": "middle"
+        },
+        {
+          "name": "Duncan",
+          "salary": 4000,
+          "passage": "middle"
+        }
+      ],
+      "contract": {
+        "type": "mortgage",
+        "mortgage": 320013000,
+        "monthly_payment": 1333387.5
+      },
+      "max_steward": 0,
+      "max_broker": 3,
+      "accepts_passengers": false,
+      "banned_allegiances": []
+    },
+    {
+      "name": "Far Trader A2",
+      "monthly_maint": 4353,
+      "fuel_per_jump": 20,
+      "max_jump": 2,
+      "fuel_tank": 40,
+      "cargo": 65,
+      "cargo_fuel": 0,
+      "berths": [
+        {
+          "type": "standard",
+          "number": 10
+        }
+      ],
+      "crew": [
+        {
+          "name": "Krrsh",
+          "salary": 4000,
+          "passage": "middle"
+        },
+        {
+          "name": "penitent grim",
+          "salary": 4000,
+          "passage": "basic"
+        },
+        {
+          "name": "Adro Vennisir",
+          "salary": 4000,
+          "passage": "basic"
+        },
+        {
+          "name": "Streph Falter",
+          "salary": 4000,
+          "passage": "basic"
+        },
+        {
+          "name": "Laert",
+          "salary": 4000,
+          "passage": "basic"
+        },
+        {
+          "name": "Pete the Stench",
+          "salary": 6000,
+          "passage": "basic"
+        },
+        {
+          "name": "Jimothey Deleroux",
+          "salary": 2000,
+          "passage": "middle"
+        }
+      ],
+      "contract": {
+        "type": "none"
+      },
+      "max_steward": 2,
+      "max_broker": 3,
+      "accepts_passengers": false,
+      "banned_allegiances": []
+    },
+    {
+      "name": "Far Trader A2 #2",
+      "monthly_maint": 4353,
+      "fuel_per_jump": 20,
+      "max_jump": 2,
+      "fuel_tank": 40,
+      "cargo": 65,
+      "cargo_fuel": 0,
+      "berths": [
+        {
+          "type": "standard",
+          "number": 10
+        }
+      ],
+      "crew": [
+        {
+          "name": "Amina Aseel",
+          "salary": 0,
+          "passage": "middle"
+        },
+        {
+          "name": "Tom Vargface",
+          "salary": 4000,
+          "passage": "basic"
+        },
+        {
+          "name": "Wolf Blood Axe",
+          "salary": 2000,
+          "passage": "middle"
+        },
+        {
+          "name": "Opal Twice Vacced",
+          "salary": 9000,
+          "passage": "basic"
+        },
+        {
+          "name": "kagni vasiir",
+          "salary": 6000,
+          "passage": "basic"
+        },
+        {
+          "name": "Ramsey Grog",
+          "salary": 4000,
+          "passage": "basic"
+        }
+      ],
+      "contract": {
+        "type": "none"
+      },
+      "max_steward": 2,
+      "max_broker": 3,
+      "accepts_passengers": false,
+      "banned_allegiances": []
+    }
+  ],
+  "fuel_dumps": [
+    {
+      "sector": "Trojan Reach",
+      "hex": "2117"
+    }
+  ],
+  "start": {
+    "sector": "Trojan Reach",
+    "hex": "2221"
+  },
+  "start_date": {
+    "year": 1105,
+    "day": 262
+  },
+  "stops": [
+    {
+      "sector": "Trojan Reach",
+      "hex": "2020"
+    },
+    {
+      "sector": "Trojan Reach",
+      "hex": "1919"
+    }
+  ],
+  "avoid": [],
+  "capital": 15800985,
+  "uncut_profits": 0,
+  "max_profit": null,
+  "max_duration": null
+}

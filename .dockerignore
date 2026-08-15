@@ -1,0 +1,9 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+cache/
+test_smoke.py
+README.md
+.github
