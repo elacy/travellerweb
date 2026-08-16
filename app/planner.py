@@ -5,9 +5,7 @@ import requests
 import os.path
 from pathlib import Path
 import heapq
-from bs4 import BeautifulSoup
 import hashlib
-from urllib.parse import urlparse, parse_qs
 import pulp
 import random
 import re
@@ -1135,7 +1133,6 @@ def find_best_route(capital, net_worth, ship, data_loader, start, start_date, de
                     best_route = new_route
             else:
                 heapq.heappush(routes,new_route)
-                routes.append(new_route)
 
     return best_route
 
@@ -1192,31 +1189,6 @@ class DrinaxContract:
         profit = final_capital - starting_capital
         cut = profit * .1
         return cut, f"King of Drinax takes 10% of profits, capital: {final_capital:,.2f} -> {final_capital - cut:,.2f}"
-
-def parse_text(text):
-    try:
-        return float(text.replace(",", "").replace("%", ""))
-    except ValueError:
-        return text
-    
-def to_camel_case(s):
-    # Split the string by spaces
-    words = s.split(' ')
-    # If there's only one word, return it as is
-    if len(words) == 1:
-        return words[0].lower()
-    # Convert the first word to lowercase and capitalize the subsequent words
-    camel_case = words[0].lower() + ''.join(word.capitalize() for word in words[1:])
-    return camel_case
-
-def get_md5_hash(text):
-    # Create an MD5 hash object
-    md5_hash = hashlib.md5()
-    # Update the hash object with the text (encoded to bytes)
-    md5_hash.update(text.encode('utf-8'))
-    # Return the hexadecimal representation of the hash
-    return md5_hash.hexdigest()
-
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -1323,7 +1295,6 @@ def plan(config):
             "profit": round(best_route.profit, 2),
         })
         duration += best_route.route_duration
-        percentage_increase += (duration * best_route.real_profit()) / (net_worth + profit)
         profit += best_route.real_profit()
         raw_profit += best_route.profit
         start_date = start_date.add_days(best_route.route_duration * 7)
@@ -1336,7 +1307,6 @@ def plan(config):
         if best_route is None:
             return {"ok": False, "error": "Unable to find a viable route for the profit/duration condition."}
         duration = best_route.route_duration
-        percentage_increase = (duration * best_route.real_profit()) / net_worth
         profit = best_route.real_profit()
         start_date = start_date.add_days(best_route.route_duration * 7)
         stop_results.append({
@@ -1348,6 +1318,7 @@ def plan(config):
             "profit": round(best_route.profit, 2),
         })
 
+    percentage_increase = (profit / net_worth) if net_worth else 0.0
     per_week = (profit / duration) if duration > 0 else 0.0
 
     return {
