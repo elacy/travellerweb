@@ -2,7 +2,6 @@ import sys, time, copy
 sys.path.insert(0, "app")
 import planner
 
-S = {"standard": 0}  # placeholder
 
 config = {
   "fleet": {
@@ -88,6 +87,20 @@ res10 = planner.plan(config)
 cfg20 = copy.deepcopy(config)
 cfg20["fleet"]["contract"]["percentage"] = 20
 res20 = planner.plan(cfg20)
+
+# Regression guard: legacy (pre-fleet-scoping) config shape. Top-level ships
+# with a ship-level drinax contract must still get the cut applied (lifted to
+# fleet scope), not silently plan with no cut.
+legacy = {k: copy.deepcopy(v) for k, v in config.items() if k != "fleet"}
+legacy["ships"] = copy.deepcopy(config["fleet"]["ships"])
+legacy["ships"][0]["contract"] = {"type": "drinax"}
+legacy["fuel_dumps"] = copy.deepcopy(config["fleet"]["fuel_dumps"])
+res_legacy = planner.plan(legacy)
+assert res_legacy.get("ok"), f"legacy config failed: {res_legacy.get('error')}"
+assert res_legacy["summary"]["total_profit"] == res10["summary"]["total_profit"], \
+    f"legacy drinax lift changed profit: {res_legacy['summary']['total_profit']} vs {res10['summary']['total_profit']}"
+print("legacy-shape config ok: True | profit matches fleet-scoped:", res_legacy["summary"]["total_profit"])
+
 print("elapsed", round(time.time() - t0, 1), "s")
 
 for label, res in (("10%", res10), ("20%", res20)):

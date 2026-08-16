@@ -262,10 +262,13 @@ class World:
     def neighbours(self, neighbours):
         self.__neighbours = neighbours
 
-    def __passenger_count(self, level, ship, other_world, starting_world, date):
+    def __passenger_count(self, level, ship, other_world, starting_world, date, steward):
         distance = self.distance(other_world)
 
-        modifier = ship.max_steward
+        # per-ship steward skill: Passage.steward is set by each Ship.passage()
+        # from its own max_steward, so a fleet-wide aggregate never overstates
+        # the draw of ships with fewer (or zero) stewards
+        modifier = steward
 
         if distance > 1:
             modifier -= distance - 1
@@ -325,13 +328,13 @@ class World:
 
         for passage in ship.passage():
             ticket_price = self.data_loader.passage(passage.type, distance)
-            passengers = min(self.__passenger_count(passage.type, ship, other_world, starting_world, date), passage.number)
+            passengers = min(self.__passenger_count(passage.type, ship, other_world, starting_world, date, passage.steward), passage.number)
             life_support = self.data_loader.life_support(passage.type) * distance / 4
             passenger_revenue += passengers * (ticket_price - life_support)
             passage_descriptions.append(f"{passengers} {passage.type} at {ticket_price} with life support of {life_support}")
 
             if passage.type == "middle" and passengers < passage.number:
-                passengers = min(self.__passenger_count("basic", ship, other_world, starting_world, date), (passage.number - passengers) * 2)
+                passengers = min(self.__passenger_count("basic", ship, other_world, starting_world, date, passage.steward), (passage.number - passengers) * 2)
                 ticket_price = self.data_loader.passage("basic", distance)
                 passenger_revenue += passengers * ticket_price
                 passage_descriptions.append(f"{passengers} basic at {ticket_price}")
@@ -581,7 +584,6 @@ class Fleet:
         self.banned_allegiances = [allegiance for ship in ships if ship.banned_allegiances is not None for allegiance in ship.banned_allegiances]
         self.crew = [crew for ship in ships for crew in ship.crew]
         self.berths = [berth for ship in ships for berth in ship.berths]
-        self.max_steward = max((ship.max_steward for ship in ships), default=0)
 
         for ship in ships:
             if ship.max_broker > self.max_broker:
@@ -1267,16 +1269,41 @@ def route_markdown(stop_results, summary):
                 lines.append(line.rstrip())
                 lines.append("")
             else:
+                # blank line between narrative lines: without it, markdown
+                # renderers collapse the whole per-stop log into one paragraph
                 lines.append(line.rstrip())
+                lines.append("")
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _lift_legacy_drinax(ship_cfgs):
+    """Pre-fleet-scoping configs carried the Drinax cut on a ship's contract.
+
+    The cut now lives on the fleet (one % of all group profit), so lift any
+    legacy ship-level drinax contract up to fleet scope instead of silently
+    dropping it (build_ship no longer constructs per-ship Drinax contracts).
+    Returns the ship configs (with drinax removed) and the lifted percentage.
+    """
+    percentage = None
+    lifted = []
+    for s in ship_cfgs:
+        contract = s.get("contract") or {}
+        if contract.get("type") == "drinax":
+            percentage = float(contract.get("percentage", 10))
+            s = dict(s)
+            s["contract"] = {"type": "none"}
+        lifted.append(s)
+    return lifted, percentage
+
+
 def plan(config):
     fleet_cfg = config.get("fleet", {})
 
-    ships = [build_ship(s) for s in fleet_cfg.get("ships", config.get("ships", []))]
+    ship_cfgs = fleet_cfg.get("ships", config.get("ships", []))
+    ship_cfgs, legacy_drinax_pct = _lift_legacy_drinax(ship_cfgs)
+    ships = [build_ship(s) for s in ship_cfgs]
     if not ships:
         return {"ok": False, "error": "No ships configured."}
 
@@ -1284,6 +1311,8 @@ def plan(config):
     contract_cfg = fleet_cfg.get("contract") or {}
     if contract_cfg.get("type") == "drinax":
         fleet_contract = DrinaxContract(float(contract_cfg.get("percentage", 10)))
+    elif legacy_drinax_pct is not None:
+        fleet_contract = DrinaxContract(legacy_drinax_pct)
 
     fleet = Fleet(*ships, contract=fleet_contract)
 
@@ -1323,7 +1352,6 @@ def plan(config):
     raw_profit = 0.0
     profit = 0.0
     duration = 0
-    percentage_increase = 0.0
 
     stop_results = []
 

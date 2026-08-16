@@ -448,13 +448,17 @@ $("load-fleet").addEventListener("click", () => {
   const saved = fleets[name];
   if (saved) {
     if (Array.isArray(saved)) {
-      // migrate pre-fleet-scoping saves (a bare array of ships)
-      state.fleet = {
-        name,
-        ships: saved.map((s) => Object.assign(emptyShip(), s)),
-        fuel_dumps: [],
-        contract: { type: "none" },
-      };
+      // migrate pre-fleet-scoping saves (a bare array of ships); lift any
+      // ship-level drinax contract to fleet scope, exactly like normalize()
+      const ships = saved.map((s) => Object.assign(emptyShip(), s));
+      let contract = { type: "none" };
+      ships.forEach((s) => {
+        if (s.contract && s.contract.type === "drinax") {
+          contract = { type: "drinax", percentage: 10 };
+          s.contract = { type: "none" };
+        }
+      });
+      state.fleet = { name, ships, fuel_dumps: [], contract };
     } else {
       state.fleet = deepCopy(saved);
     }
@@ -520,12 +524,14 @@ async function planRoute() {
     if (!resp.ok) {
       err.textContent = (data && data.detail) ? data.detail : ("HTTP " + resp.status);
       err.hidden = false;
+      lastMarkdown = "";
       out.innerHTML = "";
       return;
     }
     if (!data.ok) {
       err.textContent = data.error || "Unknown error";
       err.hidden = false;
+      lastMarkdown = "";
       out.innerHTML = "";
       return;
     }
@@ -533,6 +539,7 @@ async function planRoute() {
   } catch (ex) {
     err.textContent = String(ex);
     err.hidden = false;
+    lastMarkdown = "";
     out.innerHTML = "";
   }
 }
