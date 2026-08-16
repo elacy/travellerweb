@@ -249,11 +249,11 @@ function shipHTML(s, i) {
     </div>
     <div class="two-col">
       <div>
-        <h3>Berths <button class="ghost small" data-action="add-berth" data-index="${i}">+</button></h3>
+        <h3>Berths <button class="ghost small" data-action="add-berth" data-ship="${i}">+</button></h3>
         <div>${(s.berths || []).map((b, j) => berthRow(i, b, j)).join("")}</div>
       </div>
       <div>
-        <h3>Crew <button class="ghost small" data-action="add-crew" data-index="${i}">+</button></h3>
+        <h3>Crew <button class="ghost small" data-action="add-crew" data-ship="${i}">+</button></h3>
         <div>${(s.crew || []).map((c, j) => crewRow(i, c, j)).join("")}</div>
       </div>
     </div>
