@@ -15,9 +15,11 @@ FROM ghcr.io/actions/actions-runner:latest
 
 USER root
 
-# python3 + websockets so scripts/deploy_travellerweb.py can drive the NAS
+# python3 + websockets so scripts/deploy_travellerweb.py can drive the NAS.
+# The actions-runner base ships python3 but no pip, so install python3-pip
+# explicitly (otherwise `python3 -m pip` fails with "No module named pip").
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 curl jq \
+    && apt-get install -y --no-install-recommends python3 python3-pip curl jq \
     && rm -rf /var/lib/apt/lists/* \
     && python3 -m pip install --no-cache-dir --break-system-packages websockets
 
