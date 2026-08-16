@@ -398,17 +398,13 @@ document.addEventListener("click", (e) => {
   const rj = parseInt(t.dataset.row, 10);
 
   switch (a) {
-    case "add-ship": state.fleet.ships.push(emptyShip()); render(); break;
     case "remove-ship": state.fleet.ships.splice(i, 1); render(); break;
     case "add-crew": state.fleet.ships[si].crew.push({ name: "", salary: 0, passage: "middle" }); render(); break;
     case "remove-crew": state.fleet.ships[si].crew.splice(rj, 1); render(); break;
     case "add-berth": state.fleet.ships[si].berths.push({ type: "standard", number: 1 }); render(); break;
     case "remove-berth": state.fleet.ships[si].berths.splice(rj, 1); render(); break;
-    case "add-stop": state.stops.push({ sector: "", hex: "" }); render(); break;
     case "remove-stop": state.stops.splice(i, 1); render(); break;
-    case "add-avoid": state.avoid.push({ sector: "", hex: "" }); render(); break;
     case "remove-avoid": state.avoid.splice(i, 1); render(); break;
-    case "add-fueldump": state.fleet.fuel_dumps.push({ sector: "", hex: "" }); render(); break;
     case "remove-fueldump": state.fleet.fuel_dumps.splice(i, 1); render(); break;
   }
 });

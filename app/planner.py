@@ -173,7 +173,7 @@ class TradeGood:
             return statistics.median(prices), statistics.stdev(prices)
 
 class TradeResult:
-    def __init__(self, reachable, has_trade, starting_capital, final_capital, actual_final_capital, deals, table):
+    def __init__(self, reachable, has_trade, starting_capital, final_capital, actual_final_capital, deals, table=""):
         self.reachable = reachable
         self.has_trade = has_trade
         self.starting_capital = starting_capital
@@ -325,7 +325,7 @@ class World:
 
         for passage in ship.passage():
             ticket_price = self.data_loader.passage(passage.type, distance)
-            passengers = min(self.__passenger_count(passage.type, ship, other_world, starting_world), passage.number)
+            passengers = min(self.__passenger_count(passage.type, ship, other_world, starting_world, date), passage.number)
             life_support = self.data_loader.life_support(passage.type) * distance / 4
             passenger_revenue += passengers * (ticket_price - life_support)
             passage_descriptions.append(f"{passengers} {passage.type} at {ticket_price} with life support of {life_support}")
@@ -581,7 +581,7 @@ class Fleet:
         self.banned_allegiances = [allegiance for ship in ships if ship.banned_allegiances is not None for allegiance in ship.banned_allegiances]
         self.crew = [crew for ship in ships for crew in ship.crew]
         self.berths = [berth for ship in ships for berth in ship.berths]
-        self.montly_maint = sum(ship.monthly_maint for ship in ships)
+        self.max_steward = max((ship.max_steward for ship in ships), default=0)
 
         for ship in ships:
             if ship.max_broker > self.max_broker:
