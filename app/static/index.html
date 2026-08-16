@@ -19,11 +19,12 @@
     </section>
 
     <nav class="tabs">
-      <button class="tab active" data-tab="form">Form</button>
+      <button class="tab active" data-tab="fleet">Fleet</button>
+      <button class="tab" data-tab="route">Route</button>
       <button class="tab" data-tab="json">JSON</button>
     </nav>
 
-    <section id="tab-form" class="tab-panel">
+    <section id="tab-fleet" class="tab-panel">
       <h2>Fleet</h2>
       <div class="fleet-bar">
         <input id="fleet-name" placeholder="Fleet name">
@@ -32,9 +33,33 @@
         <button id="load-fleet">Load</button>
         <button id="delete-fleet" class="danger">Delete</button>
       </div>
+
+      <div class="fleet-contract">
+        <h3>Fleet contract</h3>
+        <label>Contract
+          <select data-path="fleet.contract.type">
+            <option value="none">None</option>
+            <option value="drinax">Drinax — % cut of group profit</option>
+          </select>
+        </label>
+        <label id="drinax-pct-row">Drinax cut (%)
+          <input type="number" data-path="fleet.contract.percentage" min="0" max="100" step="0.5">
+        </label>
+      </div>
+
+      <div class="route-lists fleet-lists">
+        <div class="list-block">
+          <h3>Fuel dumps <button class="ghost small" id="add-fueldump">+</button></h3>
+          <div id="fueldumps"></div>
+        </div>
+      </div>
+
+      <h3>Ships</h3>
       <div id="ships"></div>
       <button id="add-ship" class="ghost">+ Add ship</button>
+    </section>
 
+    <section id="tab-route" class="tab-panel" hidden>
       <h2>Route</h2>
       <div class="grid route-grid">
         <label>Sector
@@ -72,10 +97,6 @@
           <h3>Avoid <button class="ghost small" id="add-avoid">+</button></h3>
           <div id="avoid"></div>
         </div>
-        <div class="list-block">
-          <h3>Fuel dumps <button class="ghost small" id="add-fueldump">+</button></h3>
-          <div id="fueldumps"></div>
-        </div>
       </div>
 
       <button id="plan-btn" class="primary big">Plan route</button>
@@ -92,9 +113,12 @@
 
     <section id="results" hidden>
       <h2>Results</h2>
-      <div id="summary"></div>
+      <div class="results-actions">
+        <button id="copy-markdown" class="primary">Copy Markdown</button>
+        <span id="copy-status" class="hint"></span>
+      </div>
       <div id="error-box" class="error" hidden></div>
-      <div id="route-output"></div>
+      <div id="route-output" class="markdown-body"></div>
     </section>
   </main>
 

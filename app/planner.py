@@ -173,7 +173,7 @@ class TradeGood:
             return statistics.median(prices), statistics.stdev(prices)
 
 class TradeResult:
-    def __init__(self, reachable, has_trade, starting_capital, final_capital, actual_final_capital, deals, table):
+    def __init__(self, reachable, has_trade, starting_capital, final_capital, actual_final_capital, deals, table=""):
         self.reachable = reachable
         self.has_trade = has_trade
         self.starting_capital = starting_capital
@@ -262,10 +262,13 @@ class World:
     def neighbours(self, neighbours):
         self.__neighbours = neighbours
 
-    def __passenger_count(self, level, ship, other_world, starting_world, date):
+    def __passenger_count(self, level, other_world, starting_world, date, steward):
         distance = self.distance(other_world)
 
-        modifier = ship.max_steward
+        # per-ship steward skill: Passage.steward is set by each Ship.passage()
+        # from its own max_steward, so a fleet-wide aggregate never overstates
+        # the draw of ships with fewer (or zero) stewards
+        modifier = steward
 
         if distance > 1:
             modifier -= distance - 1
@@ -325,13 +328,13 @@ class World:
 
         for passage in ship.passage():
             ticket_price = self.data_loader.passage(passage.type, distance)
-            passengers = min(self.__passenger_count(passage.type, ship, other_world, starting_world), passage.number)
+            passengers = min(self.__passenger_count(passage.type, other_world, starting_world, date, passage.steward), passage.number)
             life_support = self.data_loader.life_support(passage.type) * distance / 4
             passenger_revenue += passengers * (ticket_price - life_support)
             passage_descriptions.append(f"{passengers} {passage.type} at {ticket_price} with life support of {life_support}")
 
             if passage.type == "middle" and passengers < passage.number:
-                passengers = min(self.__passenger_count("basic", ship, other_world, starting_world, date), (passage.number - passengers) * 2)
+                passengers = min(self.__passenger_count("basic", other_world, starting_world, date, passage.steward), (passage.number - passengers) * 2)
                 ticket_price = self.data_loader.passage("basic", distance)
                 passenger_revenue += passengers * ticket_price
                 passage_descriptions.append(f"{passengers} basic at {ticket_price}")
@@ -567,11 +570,13 @@ class FleetContract:
         return sum(contract.mortgage_payment(*args, **kwargs) for contract in self.contracts)
 
 class Fleet:
-    def __init__(self, *ships: "Ship"):
+    def __init__(self, *ships: "Ship", contract=None):
         self.ships = ships
         self.contract = None
 
         contracts = [ship.contract for ship in ships if ship.contract is not None]
+        if contract is not None:
+            contracts.append(contract)
         if contracts:
             self.contract = FleetContract(contracts)
             
@@ -579,7 +584,6 @@ class Fleet:
         self.banned_allegiances = [allegiance for ship in ships if ship.banned_allegiances is not None for allegiance in ship.banned_allegiances]
         self.crew = [crew for ship in ships for crew in ship.crew]
         self.berths = [berth for ship in ships for berth in ship.berths]
-        self.montly_maint = sum(ship.monthly_maint for ship in ships)
 
         for ship in ships:
             if ship.max_broker > self.max_broker:
@@ -1002,7 +1006,7 @@ class Route:
         text = []
         capital = self.starting_capital + self.profit
         arrival_date = self.start_date.add_days(total_jumps * 7)
-        table = ""
+        table = "| Date | Description | Amount | Notes |\n| --- | --- | --- | --- |\n"
         table += f"| {self.start_date} | Fuel | -{fuel_cost} |  |\n"
         text.append(f"Buy unrefined fuel for {fuel_cost}, capital {capital:,.2f}->{capital - fuel_cost:,.2f}")
         capital -= fuel_cost
@@ -1173,6 +1177,9 @@ class PerfectStrangerContract:
             return cut, f"Stern Metal takes 75% of the of total profits, capital: {final_capital:,.2f} -> {final_capital - cut:,.2f}"
 
 class DrinaxContract:
+    def __init__(self, percentage=10):
+        self.percentage = percentage
+
     def mortgage_payment(self, *_, **__):
         return 0
     
@@ -1187,8 +1194,8 @@ class DrinaxContract:
             return 0, "No profits to cut"
         
         profit = final_capital - starting_capital
-        cut = profit * .1
-        return cut, f"King of Drinax takes 10% of profits, capital: {final_capital:,.2f} -> {final_capital - cut:,.2f}"
+        cut = profit * (self.percentage / 100)
+        return cut, f"King of Drinax takes {self.percentage:g}% of profits, capital: {final_capital:,.2f} -> {final_capital - cut:,.2f}"
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -1205,8 +1212,6 @@ def build_ship(cfg):
     if ctype == "mortgage":
         contract = Mortgage(float(cfg["contract"].get("mortgage", 0)),
                             cfg["contract"].get("monthly_payment"))
-    elif ctype == "drinax":
-        contract = DrinaxContract()
     elif ctype == "perfect_stranger":
         contract = PerfectStrangerContract()
 
@@ -1232,18 +1237,90 @@ def build_ship(cfg):
     )
 
 
+def route_markdown(stop_results, summary):
+    """Assemble a plan into a markdown document (summary table + per-stop sections)."""
+    def money(v):
+        return f"{v:,.2f}"
+
+    lines = [
+        "# Traveller Trade Route Plan",
+        "",
+        "| Metric | Value |",
+        "| --- | --- |",
+        f"| Total weeks | {summary['weeks']} |",
+        f"| Total profit (Cr) | {money(summary['total_profit'])} |",
+        f"| Profit / week (Cr) | {money(summary['profit_per_week'])} |",
+        f"| Capital growth | {summary['percentage_increase'] * 100:.2f}% |",
+        "",
+    ]
+
+    for i, stop in enumerate(stop_results, 1):
+        week_label = "week" if stop["duration"] == 1 else "weeks"
+        lines.append(f"## Stop {i} — {stop['destination']} ({stop['hex']})")
+        lines.append("")
+        lines.append(f"**{stop['duration']} {week_label}** — profit **{money(stop['real_profit'])} Cr**")
+        lines.append("")
+        for line in stop["text"]:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("|"):
+                lines.append("")
+                lines.append(line.rstrip())
+                lines.append("")
+            else:
+                # blank line between narrative lines: without it, markdown
+                # renderers collapse the whole per-stop log into one paragraph
+                lines.append(line.rstrip())
+                lines.append("")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _lift_legacy_drinax(ship_cfgs):
+    """Pre-fleet-scoping configs carried the Drinax cut on a ship's contract.
+
+    The cut now lives on the fleet (one % of all group profit), so lift any
+    legacy ship-level drinax contract up to fleet scope instead of silently
+    dropping it (build_ship no longer constructs per-ship Drinax contracts).
+    Returns the ship configs (with drinax removed) and the lifted percentage.
+    """
+    percentage = None
+    lifted = []
+    for s in ship_cfgs:
+        contract = s.get("contract") or {}
+        if contract.get("type") == "drinax":
+            percentage = float(contract.get("percentage", 10))
+            s = dict(s)
+            s["contract"] = {"type": "none"}
+        lifted.append(s)
+    return lifted, percentage
+
+
 def plan(config):
-    ships = [build_ship(s) for s in config.get("ships", [])]
+    fleet_cfg = config.get("fleet", {})
+
+    ship_cfgs = fleet_cfg.get("ships", config.get("ships", []))
+    ship_cfgs, legacy_drinax_pct = _lift_legacy_drinax(ship_cfgs)
+    ships = [build_ship(s) for s in ship_cfgs]
     if not ships:
         return {"ok": False, "error": "No ships configured."}
 
-    fleet = Fleet(*ships)
+    fleet_contract = None
+    contract_cfg = fleet_cfg.get("contract") or {}
+    if contract_cfg.get("type") == "drinax":
+        fleet_contract = DrinaxContract(float(contract_cfg.get("percentage", 10)))
+    elif legacy_drinax_pct is not None:
+        fleet_contract = DrinaxContract(legacy_drinax_pct)
+
+    fleet = Fleet(*ships, contract=fleet_contract)
 
     data_dir = config.get("data_dir", "data")
     cache_dir = config.get("cache_dir", "cache")
     data_loader = DataLoader(fleet.max_jump(), data_dir=data_dir, cache_dir=cache_dir)
 
-    for fd in config.get("fuel_dumps", []):
+    for fd in fleet_cfg.get("fuel_dumps", config.get("fuel_dumps", [])):
         data_loader.add_fuel_dump(SectorHex(fd["sector"], fd["hex"]))
 
     start = data_loader.load_world_data(SectorHex(config["start"]["sector"], config["start"]["hex"]))
@@ -1275,7 +1352,6 @@ def plan(config):
     raw_profit = 0.0
     profit = 0.0
     duration = 0
-    percentage_increase = 0.0
 
     stop_results = []
 
@@ -1321,15 +1397,18 @@ def plan(config):
     percentage_increase = (profit / net_worth) if net_worth else 0.0
     per_week = (profit / duration) if duration > 0 else 0.0
 
+    summary = {
+        "weeks": duration,
+        "total_profit": round(profit, 2),
+        "profit_per_week": round(per_week, 2),
+        "percentage_increase": round(percentage_increase, 4),
+    }
+
     return {
         "ok": True,
         "stops": stop_results,
-        "summary": {
-            "weeks": duration,
-            "total_profit": round(profit, 2),
-            "profit_per_week": round(per_week, 2),
-            "percentage_increase": round(percentage_increase, 4),
-        },
+        "summary": summary,
+        "markdown": route_markdown(stop_results, summary),
     }
 
 
