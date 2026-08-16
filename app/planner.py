@@ -567,11 +567,13 @@ class FleetContract:
         return sum(contract.mortgage_payment(*args, **kwargs) for contract in self.contracts)
 
 class Fleet:
-    def __init__(self, *ships: "Ship"):
+    def __init__(self, *ships: "Ship", contract=None):
         self.ships = ships
         self.contract = None
 
         contracts = [ship.contract for ship in ships if ship.contract is not None]
+        if contract is not None:
+            contracts.append(contract)
         if contracts:
             self.contract = FleetContract(contracts)
             
@@ -1002,7 +1004,7 @@ class Route:
         text = []
         capital = self.starting_capital + self.profit
         arrival_date = self.start_date.add_days(total_jumps * 7)
-        table = ""
+        table = "| Date | Description | Amount | Notes |\n| --- | --- | --- | --- |\n"
         table += f"| {self.start_date} | Fuel | -{fuel_cost} |  |\n"
         text.append(f"Buy unrefined fuel for {fuel_cost}, capital {capital:,.2f}->{capital - fuel_cost:,.2f}")
         capital -= fuel_cost
@@ -1173,6 +1175,9 @@ class PerfectStrangerContract:
             return cut, f"Stern Metal takes 75% of the of total profits, capital: {final_capital:,.2f} -> {final_capital - cut:,.2f}"
 
 class DrinaxContract:
+    def __init__(self, percentage=10):
+        self.percentage = percentage
+
     def mortgage_payment(self, *_, **__):
         return 0
     
@@ -1187,8 +1192,8 @@ class DrinaxContract:
             return 0, "No profits to cut"
         
         profit = final_capital - starting_capital
-        cut = profit * .1
-        return cut, f"King of Drinax takes 10% of profits, capital: {final_capital:,.2f} -> {final_capital - cut:,.2f}"
+        cut = profit * (self.percentage / 100)
+        return cut, f"King of Drinax takes {self.percentage:g}% of profits, capital: {final_capital:,.2f} -> {final_capital - cut:,.2f}"
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -1205,8 +1210,6 @@ def build_ship(cfg):
     if ctype == "mortgage":
         contract = Mortgage(float(cfg["contract"].get("mortgage", 0)),
                             cfg["contract"].get("monthly_payment"))
-    elif ctype == "drinax":
-        contract = DrinaxContract()
     elif ctype == "perfect_stranger":
         contract = PerfectStrangerContract()
 
@@ -1232,18 +1235,63 @@ def build_ship(cfg):
     )
 
 
+def route_markdown(stop_results, summary):
+    """Assemble a plan into a markdown document (summary table + per-stop sections)."""
+    def money(v):
+        return f"{v:,.2f}"
+
+    lines = [
+        "# Traveller Trade Route Plan",
+        "",
+        "| Metric | Value |",
+        "| --- | --- |",
+        f"| Total weeks | {summary['weeks']} |",
+        f"| Total profit (Cr) | {money(summary['total_profit'])} |",
+        f"| Profit / week (Cr) | {money(summary['profit_per_week'])} |",
+        f"| Capital growth | {summary['percentage_increase'] * 100:.2f}% |",
+        "",
+    ]
+
+    for i, stop in enumerate(stop_results, 1):
+        week_label = "week" if stop["duration"] == 1 else "weeks"
+        lines.append(f"## Stop {i} — {stop['destination']} ({stop['hex']})")
+        lines.append("")
+        lines.append(f"**{stop['duration']} {week_label}** — profit **{money(stop['real_profit'])} Cr**")
+        lines.append("")
+        for line in stop["text"]:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("|"):
+                lines.append("")
+                lines.append(line.rstrip())
+                lines.append("")
+            else:
+                lines.append(line.rstrip())
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def plan(config):
-    ships = [build_ship(s) for s in config.get("ships", [])]
+    fleet_cfg = config.get("fleet", {})
+
+    ships = [build_ship(s) for s in fleet_cfg.get("ships", config.get("ships", []))]
     if not ships:
         return {"ok": False, "error": "No ships configured."}
 
-    fleet = Fleet(*ships)
+    fleet_contract = None
+    contract_cfg = fleet_cfg.get("contract") or {}
+    if contract_cfg.get("type") == "drinax":
+        fleet_contract = DrinaxContract(float(contract_cfg.get("percentage", 10)))
+
+    fleet = Fleet(*ships, contract=fleet_contract)
 
     data_dir = config.get("data_dir", "data")
     cache_dir = config.get("cache_dir", "cache")
     data_loader = DataLoader(fleet.max_jump(), data_dir=data_dir, cache_dir=cache_dir)
 
-    for fd in config.get("fuel_dumps", []):
+    for fd in fleet_cfg.get("fuel_dumps", config.get("fuel_dumps", [])):
         data_loader.add_fuel_dump(SectorHex(fd["sector"], fd["hex"]))
 
     start = data_loader.load_world_data(SectorHex(config["start"]["sector"], config["start"]["hex"]))
@@ -1321,15 +1369,18 @@ def plan(config):
     percentage_increase = (profit / net_worth) if net_worth else 0.0
     per_week = (profit / duration) if duration > 0 else 0.0
 
+    summary = {
+        "weeks": duration,
+        "total_profit": round(profit, 2),
+        "profit_per_week": round(per_week, 2),
+        "percentage_increase": round(percentage_increase, 4),
+    }
+
     return {
         "ok": True,
         "stops": stop_results,
-        "summary": {
-            "weeks": duration,
-            "total_profit": round(profit, 2),
-            "profit_per_week": round(per_week, 2),
-            "percentage_increase": round(percentage_increase, 4),
-        },
+        "summary": summary,
+        "markdown": route_markdown(stop_results, summary),
     }
 
 
