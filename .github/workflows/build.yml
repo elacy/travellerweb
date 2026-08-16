@@ -13,9 +13,10 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  RUNNER_IMAGE: ${{ github.repository }}-runner
 
 jobs:
-  build:
+  build-app:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -44,7 +45,7 @@ jobs:
             type=semver,pattern={{version}}
             type=sha
 
-      - name: Build and push
+      - name: Build and push app
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -52,3 +53,54 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  build-runner:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push runner
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: runner/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ env.REGISTRY }}/${{ env.RUNNER_IMAGE }}:main
+
+  deploy:
+    # Runs ON the self-hosted runner living on the NAS. After the app image
+    # is built and pushed, reconcile the TrueNAS 'travellerweb' app onto the
+    # new image (pinned by digest). The runner container carries python3 +
+    # websockets so scripts/deploy_travellerweb.py can drive the middleware.
+    needs: [build-app]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    runs-on: [self-hosted, linux, travellerweb]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Redeploy travellerweb on TrueNAS
+        run: python3 scripts/deploy_travellerweb.py
+        env:
+          TRUENAS_API_KEY: ${{ secrets.TRUENAS_API_KEY }}
+          TRUENAS_URL: wss://nas.lacy.ie:443/websocket
+          APP_NAME: travellerweb
+          APP_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          APP_TAG: main
+          HOST_PORT: 8090
+        timeout-minutes: 10
