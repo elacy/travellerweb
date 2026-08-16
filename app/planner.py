@@ -262,7 +262,7 @@ class World:
     def neighbours(self, neighbours):
         self.__neighbours = neighbours
 
-    def __passenger_count(self, level, ship, other_world, starting_world, date, steward):
+    def __passenger_count(self, level, other_world, starting_world, date, steward):
         distance = self.distance(other_world)
 
         # per-ship steward skill: Passage.steward is set by each Ship.passage()
@@ -328,13 +328,13 @@ class World:
 
         for passage in ship.passage():
             ticket_price = self.data_loader.passage(passage.type, distance)
-            passengers = min(self.__passenger_count(passage.type, ship, other_world, starting_world, date, passage.steward), passage.number)
+            passengers = min(self.__passenger_count(passage.type, other_world, starting_world, date, passage.steward), passage.number)
             life_support = self.data_loader.life_support(passage.type) * distance / 4
             passenger_revenue += passengers * (ticket_price - life_support)
             passage_descriptions.append(f"{passengers} {passage.type} at {ticket_price} with life support of {life_support}")
 
             if passage.type == "middle" and passengers < passage.number:
-                passengers = min(self.__passenger_count("basic", ship, other_world, starting_world, date, passage.steward), (passage.number - passengers) * 2)
+                passengers = min(self.__passenger_count("basic", other_world, starting_world, date, passage.steward), (passage.number - passengers) * 2)
                 ticket_price = self.data_loader.passage("basic", distance)
                 passenger_revenue += passengers * ticket_price
                 passage_descriptions.append(f"{passengers} basic at {ticket_price}")

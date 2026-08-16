@@ -172,35 +172,45 @@ const DEFAULT_CONFIG = {
 let state = deepCopy(DEFAULT_CONFIG);
 
 function normalize(cfg) {
-  const base = emptyConfig();
-  const out = deepCopy(base);
-  Object.assign(out, cfg);
+  const out = emptyConfig();
 
   // Migrate to fleet-scoped shape (ships / fuel_dumps / drinax contract).
-  if (!out.fleet) out.fleet = { ships: [], fuel_dumps: [], contract: { type: "none" } };
-  if (!Array.isArray(out.fleet.ships)) {
-    out.fleet.ships = Array.isArray(out.ships) ? out.ships : [emptyShip()];
-  }
-  out.fleet.ships = out.fleet.ships.map((s) => Object.assign(emptyShip(), s));
-  out.fleet.ships.forEach((s) => {
-    if (s.contract && s.contract.type === "drinax") {
-      out.fleet.contract = { type: "drinax", percentage: 10 };
-      s.contract = { type: "none" };
-    }
-  });
-  out.fleet.contract = Object.assign({ type: "none" }, out.fleet.contract || {});
+  // Legacy configs carried ships/fuel_dumps at the top level and the drinax
+  // cut on a ship contract; lift both into fleet scope instead of dropping
+  // them. Fields are read explicitly (not Object.assign'd) so no stale
+  // top-level keys survive into the normalized config.
+  const fleetIn = (cfg && cfg.fleet) || {};
+  const rawShips = Array.isArray(fleetIn.ships) ? fleetIn.ships
+    : Array.isArray(cfg.ships) ? cfg.ships : null;
+
+  out.fleet.name = fleetIn.name || "";
+  out.fleet.ships = (rawShips || [emptyShip()]).map((s) => Object.assign(emptyShip(), s));
+  out.fleet.fuel_dumps = Array.isArray(fleetIn.fuel_dumps) ? fleetIn.fuel_dumps
+    : Array.isArray(cfg.fuel_dumps) ? deepCopy(cfg.fuel_dumps) : [];
+
+  out.fleet.contract = Object.assign({ type: "none" }, fleetIn.contract || {});
   if (out.fleet.contract.type === "drinax" && out.fleet.contract.percentage == null) {
     out.fleet.contract.percentage = 10;
   }
-  if (!Array.isArray(out.fleet.fuel_dumps)) {
-    out.fleet.fuel_dumps = Array.isArray(out.fuel_dumps) ? out.fuel_dumps : [];
-  }
+  // lift legacy ship-level drinax contracts AFTER merging fleet.contract so a
+  // fleet-level contract keeps its own percentage
+  out.fleet.ships.forEach((s) => {
+    if (s.contract && s.contract.type === "drinax") {
+      if (out.fleet.contract.type !== "drinax") {
+        out.fleet.contract = { type: "drinax", percentage: 10 };
+      }
+      s.contract = { type: "none" };
+    }
+  });
 
   ["stops", "avoid"].forEach((k) => {
-    if (!Array.isArray(out[k])) out[k] = [];
+    out[k] = Array.isArray(cfg[k]) ? deepCopy(cfg[k]) : [];
   });
-  out.start = Object.assign({ sector: "", hex: "" }, out.start || {});
-  out.start_date = Object.assign({ year: 1105, day: 1 }, out.start_date || {});
+  out.start = Object.assign({ sector: "", hex: "" }, cfg.start || {});
+  out.start_date = Object.assign({ year: 1105, day: 1 }, cfg.start_date || {});
+  ["capital", "uncut_profits", "max_profit", "max_duration"].forEach((k) => {
+    if (cfg[k] !== undefined) out[k] = cfg[k];
+  });
   return out;
 }
 
@@ -587,8 +597,12 @@ function renderResults(data) {
 $("plan-btn").addEventListener("click", planRoute);
 
 $("copy-markdown").addEventListener("click", async () => {
-  if (!lastMarkdown) return;
   const status = $("copy-status");
+  if (!lastMarkdown) {
+    status.textContent = "Nothing to copy — run a plan first";
+    setTimeout(() => { status.textContent = ""; }, 2000);
+    return;
+  }
   try {
     await navigator.clipboard.writeText(lastMarkdown);
     status.textContent = "Copied to clipboard";
