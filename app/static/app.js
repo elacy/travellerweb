@@ -459,16 +459,18 @@ $("load-fleet").addEventListener("click", () => {
   if (saved) {
     if (Array.isArray(saved)) {
       // migrate pre-fleet-scoping saves (a bare array of ships); lift any
-      // ship-level drinax contract to fleet scope, exactly like normalize()
+      // ship-level drinax contract to fleet scope, exactly like normalize().
+      // Legacy saves carried no fuel dumps or fleet contract, so keep the
+      // currently configured ones rather than discarding them.
       const ships = saved.map((s) => Object.assign(emptyShip(), s));
-      let contract = { type: "none" };
+      let contract = deepCopy(state.fleet.contract || { type: "none" });
       ships.forEach((s) => {
         if (s.contract && s.contract.type === "drinax") {
           contract = { type: "drinax", percentage: 10 };
           s.contract = { type: "none" };
         }
       });
-      state.fleet = { name, ships, fuel_dumps: [], contract };
+      state.fleet = { name, ships, fuel_dumps: deepCopy(state.fleet.fuel_dumps), contract };
     } else {
       state.fleet = deepCopy(saved);
     }
