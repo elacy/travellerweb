@@ -70,6 +70,7 @@ function emptyConfig() {
       opening_balance: 0,
       transactions: [],
       boughtItems: [],
+      characters: [],
       fleets: [],
     },
     start: { sector: "", hex: "" },
@@ -89,6 +90,7 @@ const DEFAULT_CONFIG = {
     opening_balance: 0,
     transactions: [],
     boughtItems: [],
+    characters: [],
     fleets: [{
       name: "Pirates of Drinax",
       location: "",
@@ -193,6 +195,7 @@ function normalizeGame(g) {
     opening_balance: Number.isFinite(Number(g && g.opening_balance)) ? Number(g.opening_balance) : 0,
     transactions: normalizeTxns(g && g.transactions),
     boughtItems: normalizeBought(g && g.boughtItems),
+    characters: normalizeChars(g && g.characters),
     fleets,
   };
 }
@@ -217,6 +220,61 @@ function normalizeBought(list) {
       total: Number.isFinite(Number(b.total)) ? Number(b.total) : cost * qty,
       day,
       year,
+    };
+  }).filter(Boolean);
+}
+
+const CHAR_STAT_KEYS = ["str", "dex", "end", "int", "edu", "soc"];
+
+// MgT2e characteristic DM table: 0→-3, 1-2→-2, 3-5→-1, 6-8→0, 9-11→+1, 12-14→+2, 15+→+3.
+function charDM(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return -3;
+  if (n >= 15) return 3;
+  if (n >= 12) return 2;
+  if (n >= 9) return 1;
+  if (n >= 6) return 0;
+  if (n >= 3) return -1;
+  if (n >= 1) return -2;
+  return -3;
+}
+
+function normalizeChars(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((c) => {
+    if (!c || typeof c !== "object") return null;
+    const rawChars = (c.characteristics && typeof c.characteristics === "object") ? c.characteristics : {};
+    const characteristics = {};
+    CHAR_STAT_KEYS.forEach((k) => {
+      const n = Number(rawChars[k]);
+      characteristics[k] = Number.isFinite(n) ? Math.max(0, Math.min(15, Math.round(n))) : 0;
+    });
+    const skills = (Array.isArray(c.skills) ? c.skills : []).map((s) => {
+      if (!s || typeof s !== "object") return { name: "", level: 0 };
+      const lv = parseInt(s.level, 10);
+      return {
+        name: typeof s.name === "string" ? s.name : "",
+        level: Number.isFinite(lv) ? Math.max(0, Math.min(6, lv)) : 0,
+      };
+    }).filter((s) => s.name || s.level > 0);
+    const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+    const ageRaw = (c.age === "" || c.age == null) ? null : num(c.age);
+    return {
+      id: (typeof c.id === "string" && c.id) ? c.id : txId(),
+      name: typeof c.name === "string" ? c.name : "",
+      role: typeof c.role === "string" ? c.role : "",
+      career: typeof c.career === "string" ? c.career : "",
+      age: Number.isFinite(ageRaw) ? ageRaw : null,
+      homeworld: typeof c.homeworld === "string" ? c.homeworld : "",
+      characteristics,
+      skills,
+      salary: num(c.salary),
+      pension: num(c.pension),
+      rank: typeof c.rank === "string" ? c.rank : "",
+      terms: num(c.terms),
+      cash: num(c.cash),
+      benefits: typeof c.benefits === "string" ? c.benefits : "",
+      notes: typeof c.notes === "string" ? c.notes : "",
     };
   }).filter(Boolean);
 }
@@ -440,6 +498,7 @@ function render() {
   syncFleetUI();
   renderTxns();
   renderBoughtItems();
+  renderChars();
   enrichLabels();
 }
 
@@ -1225,6 +1284,161 @@ $("bought-list").addEventListener("click", (e) => {
   renderBoughtItems();
 });
 
+// ---------------------------------------------------------------- characters
+// MgT2e character sheets live on state.game.characters and persist with the
+// game. Every dynamic value below is esc()'d before innerHTML.
+function ensureChars() {
+  if (!Array.isArray(state.game.characters)) state.game.characters = [];
+}
+
+// Parse a comma-separated skills string like "Pilot 2, Engineer 1, Medic, Astrogation".
+// Each entry is "SkillName [Level]"; the trailing level is optional (defaults 0).
+function parseSkills(str) {
+  return String(str || "").split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => {
+      const parts = s.split(/\s+/);
+      const last = parts[parts.length - 1];
+      if (parts.length > 1 && /^\d+$/.test(last)) {
+        return {
+          name: parts.slice(0, -1).join(" "),
+          level: Math.max(0, Math.min(6, parseInt(last, 10))),
+        };
+      }
+      return { name: s, level: 0 };
+    });
+}
+
+let editingCharId = null;
+
+function resetCharForm() {
+  editingCharId = null;
+  ["name", "role", "career", "age", "homeworld", "salary", "pension", "rank", "terms", "cash", "skills", "benefits", "notes"].forEach((f) => {
+    $(`char-${f}`).value = "";
+  });
+  CHAR_STAT_KEYS.forEach((k) => { $(`char-${k}`).value = ""; });
+  $("char-save").textContent = "Add Character";
+  $("char-cancel").hidden = true;
+}
+
+function charFormToObj() {
+  const characteristics = {};
+  CHAR_STAT_KEYS.forEach((k) => {
+    characteristics[k] = Math.max(0, Math.min(15, parseInt($(`char-${k}`).value, 10) || 0));
+  });
+  const num = (el) => { const n = parseFloat(el.value); return Number.isFinite(n) ? n : 0; };
+  return {
+    name: $("char-name").value.trim(),
+    role: $("char-role").value.trim(),
+    career: $("char-career").value.trim(),
+    age: $("char-age").value === "" ? null : (parseInt($("char-age").value, 10) || 0),
+    homeworld: $("char-homeworld").value.trim(),
+    characteristics,
+    skills: parseSkills($("char-skills").value),
+    salary: num($("char-salary")),
+    pension: num($("char-pension")),
+    rank: $("char-rank").value.trim(),
+    terms: parseInt($("char-terms").value, 10) || 0,
+    cash: num($("char-cash")),
+    benefits: $("char-benefits").value.trim(),
+    notes: $("char-notes").value.trim(),
+  };
+}
+
+$("char-save").addEventListener("click", () => {
+  const obj = charFormToObj();
+  if (!obj.name) return alert("Enter a character name first");
+  ensureChars();
+  if (editingCharId) {
+    const c = state.game.characters.find((x) => x.id === editingCharId);
+    if (c) Object.assign(c, obj);
+  } else {
+    state.game.characters.push(Object.assign({ id: txId() }, obj));
+  }
+  renderChars();
+  resetCharForm();
+});
+
+$("char-cancel").addEventListener("click", resetCharForm);
+
+function renderChars() {
+  ensureChars();
+  const list = $("char-list");
+  if (!list) return;
+  const lbl = $("chars-label");
+  if (lbl) lbl.textContent = `Characters for game “${state.game.name || "unnamed"}” — saved with the game (Save on the Fleets tab).`;
+  const chars = state.game.characters;
+  if (!chars.length) {
+    list.innerHTML = '<p class="hint">No characters yet — add one above.</p>';
+    return;
+  }
+  list.innerHTML = chars.map((c) => {
+    const stats = CHAR_STAT_KEYS.map((k) => {
+      const v = (c.characteristics && c.characteristics[k]) || 0;
+      const dm = charDM(v);
+      return `<span class="char-stat"><strong>${esc(k.toUpperCase())}</strong> ${esc(v)} <span class="char-dm">(${dm >= 0 ? "+" : ""}${dm})</span></span>`;
+    }).join("");
+    const skills = (c.skills || []).map((s) =>
+      `<span class="skill-chip">${esc(s.name)}${s.level ? " " + esc(s.level) : ""}</span>`).join("");
+    const facts = [];
+    if (c.salary) facts.push(`<span class="char-fact">Salary ${esc(fmtCr(c.salary))}/month</span>`);
+    if (c.pension) facts.push(`<span class="char-fact">Pension ${esc(fmtCr(c.pension))}/year</span>`);
+    if (c.age != null) facts.push(`<span class="char-fact">Age ${esc(c.age)}</span>`);
+    if (c.homeworld) facts.push(`<span class="char-fact">Homeworld ${esc(c.homeworld)}</span>`);
+    if (c.terms) facts.push(`<span class="char-fact">${esc(c.terms)} term${c.terms === 1 ? "" : "s"}</span>`);
+    if (c.cash) facts.push(`<span class="char-fact">${esc(signedCr(c.cash))} cash</span>`);
+    const meta = [c.role, c.career, c.rank].filter(Boolean).join(" · ");
+    return `<div class="char-card" data-char-id="${esc(c.id)}">
+      <div class="char-head">
+        <strong>${esc(c.name)}</strong>
+        ${meta ? `<span class="char-meta">${esc(meta)}</span>` : ""}
+        <span class="char-actions">
+          <button class="ghost small" data-action="edit-char" data-id="${esc(c.id)}">Edit</button>
+          <button class="danger small" data-action="delete-char" data-id="${esc(c.id)}">✕</button>
+        </span>
+      </div>
+      <div class="char-stats">${stats}</div>
+      ${facts.length ? `<div class="char-facts">${facts.join("")}</div>` : ""}
+      ${skills ? `<div class="char-skills">${skills}</div>` : ""}
+      ${c.benefits ? `<div class="char-note-line"><span class="char-label">Benefits</span> ${esc(c.benefits)}</div>` : ""}
+      ${c.notes ? `<div class="char-note-line"><span class="char-label">Notes</span> ${esc(c.notes)}</div>` : ""}
+    </div>`;
+  }).join("");
+}
+
+$("char-list").addEventListener("click", (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+  const id = btn.dataset.id;
+  const chars = state.game.characters || [];
+  if (btn.dataset.action === "edit-char") {
+    const c = chars.find((x) => x.id === id);
+    if (!c) return;
+    editingCharId = id;
+    $("char-name").value = c.name;
+    $("char-role").value = c.role;
+    $("char-career").value = c.career;
+    $("char-age").value = c.age == null ? "" : c.age;
+    $("char-homeworld").value = c.homeworld;
+    $("char-salary").value = c.salary || "";
+    $("char-pension").value = c.pension || "";
+    $("char-rank").value = c.rank;
+    $("char-terms").value = c.terms || "";
+    $("char-cash").value = c.cash || "";
+    CHAR_STAT_KEYS.forEach((k) => { $(`char-${k}`).value = (c.characteristics && c.characteristics[k]) || ""; });
+    $("char-skills").value = (c.skills || []).map((s) => s.level ? `${s.name} ${s.level}` : s.name).join(", ");
+    $("char-benefits").value = c.benefits;
+    $("char-notes").value = c.notes;
+    $("char-save").textContent = "Save changes";
+    $("char-cancel").hidden = false;
+  } else if (btn.dataset.action === "delete-char") {
+    if (!confirm("Delete this character?")) return;
+    state.game.characters = chars.filter((x) => x.id !== id);
+    renderChars();
+  }
+});
+
 // ---------------------------------------------------------------- actions
 function ensureFleet() {
   if (state.fleet) return state.fleet;
@@ -1258,10 +1472,12 @@ document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () 
   $("tab-txs").hidden = t.dataset.tab !== "txs";
   $("tab-buy").hidden = t.dataset.tab !== "buy";
   $("tab-inv").hidden = t.dataset.tab !== "inv";
+  $("tab-chars").hidden = t.dataset.tab !== "chars";
   if (t.dataset.tab === "json") $("json-editor").value = JSON.stringify(state, null, 2);
   if (t.dataset.tab === "txs") renderTxns();
   if (t.dataset.tab === "buy") loadCatalogue();
   if (t.dataset.tab === "inv") renderBoughtItems();
+  if (t.dataset.tab === "chars") renderChars();
 }));
 
 $("export-json").addEventListener("click", () => {

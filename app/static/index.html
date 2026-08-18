@@ -24,6 +24,7 @@
       <button class="tab" data-tab="txs">Transactions</button>
       <button class="tab" data-tab="buy">Buy</button>
       <button class="tab" data-tab="inv">Inventory</button>
+      <button class="tab" data-tab="chars">Characters</button>
       <button class="tab" data-tab="json">JSON</button>
     </nav>
 
@@ -193,6 +194,97 @@
       <h2>Bought Items</h2>
       <p class="hint" id="inv-label"></p>
       <div id="bought-list"></div>
+    </section>
+
+    <section id="tab-chars" class="tab-panel" hidden>
+      <h2>Characters</h2>
+      <p class="hint" id="chars-label"></p>
+      <div class="char-form">
+        <label>Name
+          <input id="char-name" type="text" placeholder="e.g. Carla Sagan">
+        </label>
+        <label>Role
+          <input id="char-role" type="text" list="char-roles" placeholder="e.g. Pilot">
+        </label>
+        <label>Career
+          <input id="char-career" type="text" list="char-careers" placeholder="e.g. Scout">
+        </label>
+        <label>Age
+          <input id="char-age" type="number" min="0" step="1" placeholder="0">
+        </label>
+        <label>Homeworld
+          <input id="char-homeworld" type="text" placeholder="e.g. Regina">
+        </label>
+        <label>Salary (Cr/month)
+          <input id="char-salary" type="number" min="0" step="0.01" placeholder="0">
+        </label>
+        <label>Pension (Cr/year)
+          <input id="char-pension" type="number" min="0" step="0.01" placeholder="0">
+        </label>
+        <label>Rank
+          <input id="char-rank" type="text" placeholder="e.g. Lieutenant">
+        </label>
+        <label>Terms (4-yr terms)
+          <input id="char-terms" type="number" min="0" step="1" placeholder="0">
+        </label>
+        <label>Cash (Cr)
+          <input id="char-cash" type="number" min="0" step="0.01" placeholder="0">
+        </label>
+        <label>STR (0–15)
+          <input id="char-str" type="number" min="0" max="15" step="1" placeholder="0">
+        </label>
+        <label>DEX (0–15)
+          <input id="char-dex" type="number" min="0" max="15" step="1" placeholder="0">
+        </label>
+        <label>END (0–15)
+          <input id="char-end" type="number" min="0" max="15" step="1" placeholder="0">
+        </label>
+        <label>INT (0–15)
+          <input id="char-int" type="number" min="0" max="15" step="1" placeholder="0">
+        </label>
+        <label>EDU (0–15)
+          <input id="char-edu" type="number" min="0" max="15" step="1" placeholder="0">
+        </label>
+        <label>SOC (0–15)
+          <input id="char-soc" type="number" min="0" max="15" step="1" placeholder="0">
+        </label>
+        <label class="char-skills-label">Skills (name + level, comma-separated)
+          <input id="char-skills" type="text" placeholder="e.g. Pilot 2, Engineer 1, Medic, Astrogation">
+        </label>
+        <label class="char-benefits-label">Benefits
+          <input id="char-benefits" type="text" placeholder="optional">
+        </label>
+        <label class="char-notes-label">Notes
+          <textarea id="char-notes" rows="2" placeholder="optional"></textarea>
+        </label>
+        <button id="char-save" class="primary">Add Character</button>
+        <button id="char-cancel" hidden>Cancel</button>
+      </div>
+      <datalist id="char-roles">
+        <option value="Captain"></option>
+        <option value="Pilot"></option>
+        <option value="Navigator"></option>
+        <option value="Engineer"></option>
+        <option value="Medic"></option>
+        <option value="Gunner"></option>
+        <option value="Steward"></option>
+        <option value="Marine"></option>
+      </datalist>
+      <datalist id="char-careers">
+        <option value="Army"></option>
+        <option value="Navy"></option>
+        <option value="Marines"></option>
+        <option value="Scout"></option>
+        <option value="Merchant"></option>
+        <option value="Agent"></option>
+        <option value="Rogue"></option>
+        <option value="Scholar"></option>
+        <option value="Citizen"></option>
+        <option value="Drifter"></option>
+        <option value="Noble"></option>
+        <option value="Entertainer"></option>
+      </datalist>
+      <div id="char-list"></div>
     </section>
 
     <section id="tab-json" class="tab-panel" hidden>
