@@ -120,8 +120,11 @@
       </div>
       <div class="tx-summary" id="tx-summary"></div>
       <div class="tx-form">
-        <label>Date
-          <input type="date" id="tx-date">
+        <label>In-game day
+          <input type="number" id="tx-day" min="1" max="365" step="1" placeholder="1–365">
+        </label>
+        <label>Year
+          <input type="number" id="tx-year" min="0" step="1" placeholder="1105">
         </label>
         <label>Type
           <select id="tx-type">

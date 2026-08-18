@@ -693,13 +693,32 @@ function txId() {
 const fmtCr = (n) => "Cr " + Math.abs(n).toLocaleString("en-US", { maximumFractionDigits: 2 });
 const signedCr = (n) => (n < 0 ? "−" : "") + fmtCr(n);
 
+function normalizeDay(t) {
+  // In-game Imperial calendar date: day-of-year (1–365) + year (e.g. 1105).
+  let day = parseInt(t.day, 10);
+  let year = parseInt(t.year, 10);
+  if (!isFinite(day) || !isFinite(year)) {
+    // migrate any legacy Gregorian `date` ("YYYY-MM-DD") → day-of-year + year
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(t.date || "").trim());
+    if (m) {
+      year = +m[1];
+      day = Math.round((Date.UTC(year, +m[2] - 1, +m[3]) - Date.UTC(year, 0, 0)) / 86400000);
+    }
+  }
+  if (!isFinite(day)) day = 1;
+  if (!isFinite(year)) year = 1105;
+  return { day: Math.max(1, Math.min(365, day)), year };
+}
+
 function normalizeTxns(list) {
   if (!Array.isArray(list)) return [];
   return list.map((t) => {
     const amount = (typeof t.amount === "number" && isFinite(t.amount)) ? t.amount : (parseFloat(t.amount) || 0);
+    const { day, year } = normalizeDay(t);
     return {
       id: (typeof t.id === "string" && t.id) ? t.id : txId(),
-      date: (typeof t.date === "string") ? t.date : String(t.date || ""),
+      day,
+      year,
       type: t.type === "income" ? "income" : "expense",
       amount,
       category: (typeof t.category === "string") ? t.category : String(t.category || ""),
@@ -713,10 +732,8 @@ function ensureLedger() {
   if (!Array.isArray(state.fleet.transactions)) state.fleet.transactions = [];
 }
 
-function todayLocal() {
-  const d = new Date();
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-}
+const fmtDate = (t) => String(t.day).padStart(3, "0") + "-" + String(t.year);
+let lastDay = 1, lastYear = 1105; // prefill the add-form with the most recent in-game date
 
 function txTotals() {
   const txs = state.fleet.transactions || [];
@@ -733,12 +750,13 @@ function renderTxns() {
   $("tx-fleet-label").textContent = `Money for fleet “${state.fleet.name || "unnamed"}” — each saved fleet keeps its own transactions; Save on the Fleets tab to keep changes.`;
 
   const txs = state.fleet.transactions;
-  const sorted = txs.map((t, i) => ({ t, i })).sort((a, b) => (a.t.date < b.t.date ? -1 : a.t.date > b.t.date ? 1 : a.i - b.i));
+  const sorted = txs.map((t, i) => ({ t, i })).sort((a, b) =>
+    (a.t.year - b.t.year) || (a.t.day - b.t.day) || (a.i - b.i));
   let running = state.fleet.opening_balance || 0;
   const rows = sorted.map(({ t }) => {
     running += t.type === "income" ? t.amount : -t.amount;
     return `<tr data-tx-id="${esc(t.id)}">
-      <td>${esc(t.date)}</td>
+      <td>${esc(fmtDate(t))}</td>
       <td>${t.type === "income" ? "Income" : "Expense"}</td>
       <td>${esc(t.category || "—")}</td>
       <td>${esc(t.note || "—")}</td>
@@ -760,7 +778,7 @@ function renderTxns() {
 
   $("tx-list").innerHTML = txs.length
     ? `<table class="tx-table">
-        <thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Note</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr></thead>
+        <thead><tr><th>Day</th><th>Type</th><th>Category</th><th>Note</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>`
     : '<p class="hint">No transactions for this fleet yet — add one above.</p>';
@@ -770,7 +788,8 @@ let editingTxId = null;
 
 function resetTxForm() {
   editingTxId = null;
-  $("tx-date").value = todayLocal();
+  $("tx-day").value = lastDay;
+  $("tx-year").value = lastYear;
   $("tx-type").value = "expense";
   $("tx-amount").value = "";
   $("tx-category").value = "";
@@ -780,18 +799,22 @@ function resetTxForm() {
 }
 
 $("tx-add").addEventListener("click", () => {
-  const date = $("tx-date").value;
+  const day = parseInt($("tx-day").value, 10);
+  const year = parseInt($("tx-year").value, 10);
   const type = $("tx-type").value;
   const amount = parseFloat($("tx-amount").value);
-  if (!date) return alert("Pick a date");
+  if (!isFinite(day) || day < 1 || day > 365) return alert("Enter an in-game day between 1 and 365");
+  if (!isFinite(year)) return alert("Enter an in-game year (e.g. 1105)");
   if (!isFinite(amount) || amount <= 0) return alert("Enter a positive amount");
   ensureLedger();
+  const patch = { day, year, type, amount, category: $("tx-category").value.trim(), note: $("tx-note").value.trim() };
   if (editingTxId) {
     const t = state.fleet.transactions.find((x) => x.id === editingTxId);
-    if (t) Object.assign(t, { date, type, amount, category: $("tx-category").value.trim(), note: $("tx-note").value.trim() });
+    if (t) Object.assign(t, patch);
   } else {
-    state.fleet.transactions.push({ id: txId(), date, type, amount, category: $("tx-category").value.trim(), note: $("tx-note").value.trim() });
+    state.fleet.transactions.push({ id: txId(), ...patch });
   }
+  lastDay = day; lastYear = year;
   renderTxns();
   resetTxForm();
 });
@@ -812,7 +835,8 @@ $("tx-list").addEventListener("click", (e) => {
     const t = (state.fleet.transactions || []).find((x) => x.id === id);
     if (!t) return;
     editingTxId = id;
-    $("tx-date").value = t.date;
+    $("tx-day").value = t.day;
+    $("tx-year").value = t.year;
     $("tx-type").value = t.type;
     $("tx-amount").value = t.amount;
     $("tx-category").value = t.category;
