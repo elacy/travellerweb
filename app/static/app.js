@@ -69,6 +69,7 @@ function emptyConfig() {
       name: "",
       opening_balance: 0,
       transactions: [],
+      boughtItems: [],
       fleets: [],
     },
     start: { sector: "", hex: "" },
@@ -87,6 +88,7 @@ const DEFAULT_CONFIG = {
     name: "Pirates of Drinax",
     opening_balance: 0,
     transactions: [],
+    boughtItems: [],
     fleets: [{
       name: "Pirates of Drinax",
       location: "",
@@ -190,8 +192,33 @@ function normalizeGame(g) {
     name: (g && typeof g.name === "string" && g.name.trim()) ? g.name : "",
     opening_balance: Number.isFinite(Number(g && g.opening_balance)) ? Number(g.opening_balance) : 0,
     transactions: normalizeTxns(g && g.transactions),
+    boughtItems: normalizeBought(g && g.boughtItems),
     fleets,
   };
+}
+
+function normalizeBought(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((b) => {
+    if (!b || typeof b !== "object") return null;
+    const cost = Number.isFinite(Number(b.cost)) ? Number(b.cost) : 0;
+    const qty = Math.max(1, parseInt(b.qty, 10) || 1);
+    const { day, year } = normalizeDay({ day: b.day, year: b.year });
+    return {
+      id: (typeof b.id === "string" && b.id) ? b.id : txId(),
+      itemId: (typeof b.itemId === "string") ? b.itemId : "",
+      name: (typeof b.name === "string") ? b.name : "",
+      category: (typeof b.category === "string") ? b.category : "",
+      tl: (b.tl != null) ? b.tl : null,
+      cost,
+      mass: (b.mass != null) ? b.mass : 0,
+      stats: (b.stats && typeof b.stats === "object") ? deepCopy(b.stats) : {},
+      qty,
+      total: Number.isFinite(Number(b.total)) ? Number(b.total) : cost * qty,
+      day,
+      year,
+    };
+  }).filter(Boolean);
 }
 
 function normalize(cfg) {
@@ -412,6 +439,7 @@ function render() {
   syncFleetContractVisibility();
   syncFleetUI();
   renderTxns();
+  renderBoughtItems();
   enrichLabels();
 }
 
@@ -1123,8 +1151,78 @@ $("buy-btn").addEventListener("click", () => {
     note: qty + " x " + item.name,
   };
   state.game.transactions.push(t);
+
+  // Track the purchase in the game's inventory (full stats snapshot), merging
+  // repeat buys of the same item into a single line.
+  ensureBoughtItems();
+  const existing = state.game.boughtItems.find((b) => b.itemId === item.id);
+  if (existing) {
+    existing.qty += qty;
+    existing.total += item.cost * qty;
+    existing.day = lastDay;
+    existing.year = lastYear;
+  } else {
+    state.game.boughtItems.push({
+      id: txId(),
+      itemId: item.id,
+      name: item.name,
+      category: item.category || "",
+      tl: item.tl != null ? item.tl : null,
+      cost: item.cost != null ? item.cost : 0,
+      mass: item.mass != null ? item.mass : 0,
+      stats: deepCopy(item.stats || {}),
+      qty,
+      total: item.cost * qty,
+      day: lastDay,
+      year: lastYear,
+    });
+  }
+
   renderTxns();
+  renderBoughtItems();
   $("buy-qty").value = 1;
+});
+
+// ---------------------------------------------------------------- bought items
+function ensureBoughtItems() {
+  if (!Array.isArray(state.game.boughtItems)) state.game.boughtItems = [];
+}
+
+function renderBoughtItems() {
+  ensureBoughtItems();
+  const list = $("bought-list");
+  if (!list) return;
+  const lbl = $("inv-label");
+  if (lbl) lbl.textContent = `Equipment bought for game “${state.game.name || "unnamed"}” — saved with the game (Save on the Fleets tab).`;
+  const items = state.game.boughtItems;
+  if (!items.length) {
+    list.innerHTML = '<p class="hint">Nothing bought yet — use the Buy tab to purchase equipment.</p>';
+    return;
+  }
+  let spent = 0;
+  const rows = items.map((b) => {
+    spent += b.total;
+    return `<div class="bought-item" data-bought-id="${esc(b.id)}">
+      <div class="bought-item-head">
+        <strong>${esc(b.name)}</strong>
+        <span class="bought-qty">× ${esc(b.qty)}</span>
+        <span class="buy-item-meta">${esc(b.category || "")} · TL ${esc(b.tl != null ? b.tl : "—")} · ${esc(b.mass != null ? b.mass + " kg" : "—")} · <span class="buy-cost">Cr ${esc(b.cost != null ? b.cost : "—")}</span> each</span>
+        <span class="bought-total">${esc(signedCr(b.total))}</span>
+        <button class="danger small" data-action="delete-bought" data-id="${esc(b.id)}">✕</button>
+      </div>
+      ${itemStatsHTML(b)}
+      <div class="bought-date hint">Bought ${esc(fmtDate(b))}</div>
+    </div>`;
+  }).join("");
+  list.innerHTML = `<div class="bought-summary">${items.length} item type${items.length === 1 ? "" : "s"} · total spent <strong>${esc(signedCr(spent))}</strong></div>` + rows;
+}
+
+$("bought-list").addEventListener("click", (e) => {
+  const btn = e.target.closest('[data-action="delete-bought"]');
+  if (!btn) return;
+  if (!confirm("Remove this item from the inventory? (The ledger entry stays.)")) return;
+  state.game.boughtItems = state.game.boughtItems.filter((b) => b.id !== btn.dataset.id);
+  renderBoughtItems();
 });
 
 // ---------------------------------------------------------------- actions
@@ -1159,9 +1257,11 @@ document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () 
   $("tab-json").hidden = t.dataset.tab !== "json";
   $("tab-txs").hidden = t.dataset.tab !== "txs";
   $("tab-buy").hidden = t.dataset.tab !== "buy";
+  $("tab-inv").hidden = t.dataset.tab !== "inv";
   if (t.dataset.tab === "json") $("json-editor").value = JSON.stringify(state, null, 2);
   if (t.dataset.tab === "txs") renderTxns();
   if (t.dataset.tab === "buy") loadCatalogue();
+  if (t.dataset.tab === "inv") renderBoughtItems();
 }));
 
 $("export-json").addEventListener("click", () => {

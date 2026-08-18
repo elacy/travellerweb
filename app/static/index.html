@@ -23,6 +23,7 @@
       <button class="tab" data-tab="fleet">Fleets</button>
       <button class="tab" data-tab="txs">Transactions</button>
       <button class="tab" data-tab="buy">Buy</button>
+      <button class="tab" data-tab="inv">Inventory</button>
       <button class="tab" data-tab="json">JSON</button>
     </nav>
 
@@ -186,6 +187,12 @@
         <button id="buy-btn" class="primary">Buy</button>
       </div>
       <div id="buy-list"></div>
+    </section>
+
+    <section id="tab-inv" class="tab-panel" hidden>
+      <h2>Bought Items</h2>
+      <p class="hint" id="inv-label"></p>
+      <div id="bought-list"></div>
     </section>
 
     <section id="tab-json" class="tab-panel" hidden>
