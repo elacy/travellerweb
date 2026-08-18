@@ -21,6 +21,7 @@
     <nav class="tabs">
       <button class="tab active" data-tab="route">Route</button>
       <button class="tab" data-tab="fleet">Fleets</button>
+      <button class="tab" data-tab="txs">Transactions</button>
       <button class="tab" data-tab="json">JSON</button>
     </nav>
 
@@ -107,6 +108,52 @@
       <h3>Ships</h3>
       <div id="ships"></div>
       <button id="add-ship" class="ghost">+ Add ship</button>
+    </section>
+
+    <section id="tab-txs" class="tab-panel" hidden>
+      <h2>Transactions</h2>
+      <p class="hint tx-fleet-note" id="tx-fleet-label"></p>
+      <div class="tx-toolbar">
+        <label>Opening balance (Cr)
+          <input type="number" id="tx-opening" step="0.01" placeholder="0">
+        </label>
+      </div>
+      <div class="tx-summary" id="tx-summary"></div>
+      <div class="tx-form">
+        <label>Date
+          <input type="date" id="tx-date">
+        </label>
+        <label>Type
+          <select id="tx-type">
+            <option value="expense">Expense</option>
+            <option value="income">Income</option>
+          </select>
+        </label>
+        <label>Amount (Cr)
+          <input type="number" id="tx-amount" min="0" step="0.01" placeholder="0">
+        </label>
+        <label>Category
+          <input type="text" id="tx-category" list="tx-cats" placeholder="e.g. Fuel">
+        </label>
+        <label>Note
+          <input type="text" id="tx-note" placeholder="optional">
+        </label>
+        <button id="tx-add" class="primary">Add transaction</button>
+        <button id="tx-cancel" hidden>Cancel</button>
+      </div>
+      <datalist id="tx-cats">
+        <option value="Fuel"></option>
+        <option value="Maintenance"></option>
+        <option value="Mortgage"></option>
+        <option value="Crew wages"></option>
+        <option value="Cargo buy"></option>
+        <option value="Cargo sale"></option>
+        <option value="Repairs"></option>
+        <option value="Berthing"></option>
+        <option value="Refit"></option>
+        <option value="Other"></option>
+      </datalist>
+      <div id="tx-list"></div>
     </section>
 
     <section id="tab-json" class="tab-panel" hidden>

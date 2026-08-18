@@ -70,6 +70,8 @@ function emptyConfig() {
       ships: [emptyShip()],
       fuel_dumps: [],
       contract: { type: "none" },
+      opening_balance: 0,
+      transactions: [],
     },
     start: { sector: "", hex: "" },
     start_date: { year: 1105, day: 1 },
@@ -145,6 +147,8 @@ const DEFAULT_CONFIG = {
     ],
     fuel_dumps: [{ sector: "Trojan Reach", hex: "2117" }],
     contract: { type: "drinax", percentage: 10 },
+    opening_balance: 0,
+    transactions: [],
   },
   start: { sector: "Trojan Reach", hex: "2221" },
   start_date: { year: 1105, day: 262 },
@@ -190,6 +194,9 @@ function normalize(cfg) {
       s.contract = { type: "none" };
     }
   });
+
+  out.fleet.opening_balance = Number.isFinite(Number(fleetIn.opening_balance)) ? Number(fleetIn.opening_balance) : 0;
+  out.fleet.transactions = normalizeTxns(fleetIn.transactions);
 
   ["stops", "avoid"].forEach((k) => {
     out[k] = Array.isArray(cfg[k]) ? deepCopy(cfg[k]) : [];
@@ -319,6 +326,7 @@ function render() {
   syncScalars();
   syncFleetContractVisibility();
   syncFleetUI();
+  renderTxns();
   enrichLabels();
 }
 
@@ -637,6 +645,7 @@ function loadFleetByName(name) {
   } else {
     state.fleet = deepCopy(saved);
   }
+  ensureLedger();
   return true;
 }
 
@@ -676,6 +685,147 @@ $("delete-fleet").addEventListener("click", () => {
   refreshFleetSelect();
 });
 
+// ---------------------------------------------------------------- transactions
+function txId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+const fmtCr = (n) => "Cr " + Math.abs(n).toLocaleString("en-US", { maximumFractionDigits: 2 });
+const signedCr = (n) => (n < 0 ? "−" : "") + fmtCr(n);
+
+function normalizeTxns(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((t) => {
+    const amount = (typeof t.amount === "number" && isFinite(t.amount)) ? t.amount : (parseFloat(t.amount) || 0);
+    return {
+      id: (typeof t.id === "string" && t.id) ? t.id : txId(),
+      date: (typeof t.date === "string") ? t.date : String(t.date || ""),
+      type: t.type === "income" ? "income" : "expense",
+      amount,
+      category: (typeof t.category === "string") ? t.category : String(t.category || ""),
+      note: (typeof t.note === "string") ? t.note : String(t.note || ""),
+    };
+  });
+}
+
+function ensureLedger() {
+  if (typeof state.fleet.opening_balance !== "number" || !isFinite(state.fleet.opening_balance)) state.fleet.opening_balance = 0;
+  if (!Array.isArray(state.fleet.transactions)) state.fleet.transactions = [];
+}
+
+function todayLocal() {
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+function txTotals() {
+  const txs = state.fleet.transactions || [];
+  let income = 0, expense = 0;
+  txs.forEach((t) => { if (t.type === "income") income += t.amount; else expense += t.amount; });
+  return { income, expense, balance: (state.fleet.opening_balance || 0) + income - expense };
+}
+
+function renderTxns() {
+  ensureLedger();
+  const openEl = $("tx-opening");
+  if (openEl && document.activeElement !== openEl) openEl.value = (state.fleet.opening_balance || 0);
+
+  $("tx-fleet-label").textContent = `Money for fleet “${state.fleet.name || "unnamed"}” — each saved fleet keeps its own transactions; Save on the Fleets tab to keep changes.`;
+
+  const txs = state.fleet.transactions;
+  const sorted = txs.map((t, i) => ({ t, i })).sort((a, b) => (a.t.date < b.t.date ? -1 : a.t.date > b.t.date ? 1 : a.i - b.i));
+  let running = state.fleet.opening_balance || 0;
+  const rows = sorted.map(({ t }) => {
+    running += t.type === "income" ? t.amount : -t.amount;
+    return `<tr data-tx-id="${esc(t.id)}">
+      <td>${esc(t.date)}</td>
+      <td>${t.type === "income" ? "Income" : "Expense"}</td>
+      <td>${esc(t.category || "—")}</td>
+      <td>${esc(t.note || "—")}</td>
+      <td class="num ${t.type}">${t.type === "income" ? "+" : "−"}${fmtCr(t.amount)}</td>
+      <td class="num">${signedCr(running)}</td>
+      <td class="tx-actions">
+        <button class="ghost small" data-action="edit-tx" data-id="${esc(t.id)}">Edit</button>
+        <button class="danger small" data-action="delete-tx" data-id="${esc(t.id)}">✕</button>
+      </td>
+    </tr>`;
+  }).join("");
+
+  const totals = txTotals();
+  $("tx-summary").innerHTML = `
+    <div class="tx-chip">Opening <strong>${signedCr(state.fleet.opening_balance || 0)}</strong></div>
+    <div class="tx-chip income">In <strong>+${fmtCr(totals.income)}</strong></div>
+    <div class="tx-chip expense">Spent <strong>−${fmtCr(totals.expense)}</strong></div>
+    <div class="tx-chip balance">Balance <strong>${signedCr(totals.balance)}</strong></div>`;
+
+  $("tx-list").innerHTML = txs.length
+    ? `<table class="tx-table">
+        <thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Note</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`
+    : '<p class="hint">No transactions for this fleet yet — add one above.</p>';
+}
+
+let editingTxId = null;
+
+function resetTxForm() {
+  editingTxId = null;
+  $("tx-date").value = todayLocal();
+  $("tx-type").value = "expense";
+  $("tx-amount").value = "";
+  $("tx-category").value = "";
+  $("tx-note").value = "";
+  $("tx-add").textContent = "Add transaction";
+  $("tx-cancel").hidden = true;
+}
+
+$("tx-add").addEventListener("click", () => {
+  const date = $("tx-date").value;
+  const type = $("tx-type").value;
+  const amount = parseFloat($("tx-amount").value);
+  if (!date) return alert("Pick a date");
+  if (!isFinite(amount) || amount <= 0) return alert("Enter a positive amount");
+  ensureLedger();
+  if (editingTxId) {
+    const t = state.fleet.transactions.find((x) => x.id === editingTxId);
+    if (t) Object.assign(t, { date, type, amount, category: $("tx-category").value.trim(), note: $("tx-note").value.trim() });
+  } else {
+    state.fleet.transactions.push({ id: txId(), date, type, amount, category: $("tx-category").value.trim(), note: $("tx-note").value.trim() });
+  }
+  renderTxns();
+  resetTxForm();
+});
+
+$("tx-cancel").addEventListener("click", resetTxForm);
+
+$("tx-opening").addEventListener("input", () => {
+  const v = parseFloat($("tx-opening").value);
+  state.fleet.opening_balance = isFinite(v) ? v : 0;
+  renderTxns();
+});
+
+$("tx-list").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-action]");
+  if (!btn) return;
+  const id = btn.dataset.id;
+  if (btn.dataset.action === "edit-tx") {
+    const t = (state.fleet.transactions || []).find((x) => x.id === id);
+    if (!t) return;
+    editingTxId = id;
+    $("tx-date").value = t.date;
+    $("tx-type").value = t.type;
+    $("tx-amount").value = t.amount;
+    $("tx-category").value = t.category;
+    $("tx-note").value = t.note;
+    $("tx-add").textContent = "Save changes";
+    $("tx-cancel").hidden = false;
+  } else if (btn.dataset.action === "delete-tx") {
+    if (!confirm("Delete this transaction?")) return;
+    state.fleet.transactions = (state.fleet.transactions || []).filter((x) => x.id !== id);
+    renderTxns();
+  }
+});
+
 // ---------------------------------------------------------------- actions
 $("load-preset").addEventListener("click", () => { state = deepCopy(DEFAULT_CONFIG); render(); });
 $("clear-all").addEventListener("click", () => { state = emptyConfig(); render(); });
@@ -689,7 +839,9 @@ document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () 
   $("tab-fleet").hidden = t.dataset.tab !== "fleet";
   $("tab-route").hidden = t.dataset.tab !== "route";
   $("tab-json").hidden = t.dataset.tab !== "json";
+  $("tab-txs").hidden = t.dataset.tab !== "txs";
   if (t.dataset.tab === "json") $("json-editor").value = JSON.stringify(state, null, 2);
+  if (t.dataset.tab === "txs") renderTxns();
 }));
 
 $("export-json").addEventListener("click", () => {
@@ -813,6 +965,7 @@ $("copy-markdown").addEventListener("click", async () => {
 // ---------------------------------------------------------------- init
 function init() {
   refreshFleetSelect();
+  resetTxForm();
   render();
 }
 init();

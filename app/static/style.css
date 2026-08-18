@@ -203,3 +203,36 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color:
 .loc-empty { padding: 9px 10px; color: var(--muted); font-size: 13px; }
 .loc-hex-row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
 .loc-hex { width: 96px; }
+
+/* ---------------------------------------------------------------- transactions */
+.tx-fleet-note { margin: 0 0 12px; }
+.tx-toolbar { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 10px; }
+.tx-toolbar label { flex: 0 1 200px; }
+
+.tx-summary { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0 16px; }
+.tx-chip {
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 14px; font-size: 12px; color: var(--muted);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.tx-chip strong { color: var(--text); font-size: 14px; }
+.tx-chip.income strong { color: var(--ok); }
+.tx-chip.expense strong { color: var(--danger); }
+.tx-chip.balance strong { color: var(--accent-2); }
+
+.tx-form {
+  display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px; margin: 0 0 16px;
+}
+.tx-form label { min-width: 130px; flex: 1 1 140px; }
+.tx-form button { align-self: flex-end; }
+
+.tx-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.tx-table th, .tx-table td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+.tx-table th { background: var(--panel-2); color: var(--muted); font-weight: 600; font-size: 12px; }
+.tx-table td.num, .tx-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.tx-table td.income { color: var(--ok); }
+.tx-table td.expense { color: var(--danger); }
+.tx-actions { text-align: right; white-space: nowrap; }
+.tx-actions button { margin-left: 4px; }
