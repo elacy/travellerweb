@@ -22,12 +22,18 @@
       <button class="tab active" data-tab="route">Route</button>
       <button class="tab" data-tab="fleet">Fleets</button>
       <button class="tab" data-tab="txs">Transactions</button>
+      <button class="tab" data-tab="buy">Buy</button>
       <button class="tab" data-tab="json">JSON</button>
     </nav>
 
     <section id="tab-route" class="tab-panel">
       <h2>Route</h2>
       <div class="route-fleet-bar">
+        <label>Game
+          <select id="route-game-select">
+            <option value="">— choose saved game —</option>
+          </select>
+        </label>
         <label>Fleet
           <select id="route-fleet-select">
             <option value="">— choose saved fleet —</option>
@@ -77,8 +83,17 @@
 
     <section id="tab-fleet" class="tab-panel" hidden>
       <h2>Fleets</h2>
+      <div class="game-bar">
+        <input id="game-name" placeholder="Game name">
+        <button id="save-game" class="primary">Save game</button>
+        <select id="game-select"></select>
+        <button id="load-game">Load</button>
+        <button id="delete-game" class="danger">Delete</button>
+      </div>
+
       <div class="fleet-bar">
         <input id="fleet-name" placeholder="Fleet name">
+        <input id="fleet-location" placeholder="Location (world / hex)">
         <button id="save-fleet" class="primary">Save fleet</button>
         <select id="fleet-select"></select>
         <button id="load-fleet">Load</button>
@@ -157,6 +172,20 @@
         <option value="Other"></option>
       </datalist>
       <div id="tx-list"></div>
+    </section>
+
+    <section id="tab-buy" class="tab-panel" hidden>
+      <h2>Buy Equipment</h2>
+      <p class="hint">Purchases post to the current game's ledger as expenses.</p>
+      <div class="buy-toolbar">
+        <input id="buy-search" type="text" placeholder="Search name, category…">
+        <select id="buy-category"><option value="">All categories</option></select>
+        <label class="buy-qty-label">Qty
+          <input id="buy-qty" type="number" min="1" step="1" value="1">
+        </label>
+        <button id="buy-btn" class="primary">Buy</button>
+      </div>
+      <div id="buy-list"></div>
     </section>
 
     <section id="tab-json" class="tab-panel" hidden>

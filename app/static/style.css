@@ -73,7 +73,12 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color:
 
 .fleet-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
 .fleet-bar #fleet-name { flex: 0 1 180px; }
+.fleet-bar #fleet-location { flex: 0 1 200px; }
 .fleet-bar #fleet-select { flex: 0 1 280px; }
+
+.game-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.game-bar #game-name { flex: 0 1 180px; }
+.game-bar #game-select { flex: 0 1 280px; }
 
 .route-fleet-bar { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 16px; }
 .route-fleet-bar label { flex: 0 1 260px; }
@@ -109,6 +114,10 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color:
 .ship-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .ship-head .ship-name { flex: 1; font-size: 15px; font-weight: 600; }
 .ship-head button { flex-shrink: 0; }
+
+.ship-move-row { display: flex; gap: 8px; align-items: flex-end; margin: 0 0 12px; }
+.ship-move-row .ship-move-label { flex: 0 1 240px; }
+.ship-move-row select { width: 100%; }
 
 .ship-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
 .contract-row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; margin: 12px 0; }
@@ -236,3 +245,21 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color:
 .tx-table td.expense { color: var(--danger); }
 .tx-actions { text-align: right; white-space: nowrap; }
 .tx-actions button { margin-left: 4px; }
+
+/* ---------------------------------------------------------------- buy */
+.buy-toolbar { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 12px; }
+.buy-toolbar #buy-search { flex: 1 1 240px; }
+.buy-toolbar #buy-category { flex: 0 1 180px; }
+.buy-qty-label { flex: 0 1 90px; }
+
+.buy-item {
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer;
+}
+.buy-item:hover { border-color: var(--accent); }
+.buy-item.selected { border-color: var(--accent-2); background: rgba(126, 224, 163, .06); }
+.buy-item-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.buy-item-head strong { font-size: 14px; }
+.buy-item-meta { color: var(--muted); font-size: 12px; }
+.buy-cost { color: var(--accent-2); }
+.buy-item-stats { color: var(--muted); font-size: 12px; margin-top: 4px; }

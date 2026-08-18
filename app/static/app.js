@@ -65,13 +65,11 @@ function emptyShip() {
 
 function emptyConfig() {
   return {
-    fleet: {
+    game: {
       name: "",
-      ships: [emptyShip()],
-      fuel_dumps: [],
-      contract: { type: "none" },
       opening_balance: 0,
       transactions: [],
+      fleets: [],
     },
     start: { sector: "", hex: "" },
     start_date: { year: 1105, day: 1 },
@@ -81,11 +79,18 @@ function emptyConfig() {
   };
 }
 
-// Exact default from traveller-trade-planner trade.py main()
+// Exact default from traveller-trade-planner trade.py main().
+// Data model: Game -> Fleets -> Ships. The game carries the ledger
+// (opening_balance + transactions) and the fleets array.
 const DEFAULT_CONFIG = {
-  fleet: {
+  game: {
     name: "Pirates of Drinax",
-    ships: [
+    opening_balance: 0,
+    transactions: [],
+    fleets: [{
+      name: "Pirates of Drinax",
+      location: "",
+      ships: [
     { name: "Vhurg", monthly_maint: 4513, fuel_per_jump: 20, max_jump: 2, fuel_tank: 42,
       cargo: 25, cargo_fuel: 0,
       berths: [{ type: "standard", number: 8 }, { type: "low", number: 8 }],
@@ -147,8 +152,7 @@ const DEFAULT_CONFIG = {
     ],
     fuel_dumps: [{ sector: "Trojan Reach", hex: "2117" }],
     contract: { type: "drinax", percentage: 10 },
-    opening_balance: 0,
-    transactions: [],
+    }],
   },
   start: { sector: "Trojan Reach", hex: "2221" },
   start_date: { year: 1105, day: 262 },
@@ -162,41 +166,90 @@ const DEFAULT_CONFIG = {
 
 // ---------------------------------------------------------------- state
 let state = deepCopy(DEFAULT_CONFIG);
+// state.fleet is a live reference to the selected fleet inside
+// state.game.fleets — keeps every fleet.* data-path binding and the route
+// planner's `config.fleet` shape working unchanged.
+state.fleet = state.game.fleets[0] || null;
+
+function normalizeGame(g) {
+  const rawFleets = Array.isArray(g && g.fleets) ? g.fleets : [];
+  const fleets = [];
+  rawFleets.forEach((f) => {
+    if (!f || typeof f !== "object") return;
+    const contract = Object.assign({ type: "none" }, (f.contract && typeof f.contract === "object") ? f.contract : {});
+    if (contract.type === "drinax" && contract.percentage == null) contract.percentage = 10;
+    fleets.push({
+      name: typeof f.name === "string" ? f.name : "",
+      location: typeof f.location === "string" ? f.location : "",
+      ships: Array.isArray(f.ships) ? f.ships.map((s) => Object.assign(emptyShip(), s)) : [],
+      fuel_dumps: Array.isArray(f.fuel_dumps) ? deepCopy(f.fuel_dumps) : [],
+      contract,
+    });
+  });
+  return {
+    name: (g && typeof g.name === "string" && g.name.trim()) ? g.name : "",
+    opening_balance: Number.isFinite(Number(g && g.opening_balance)) ? Number(g.opening_balance) : 0,
+    transactions: normalizeTxns(g && g.transactions),
+    fleets,
+  };
+}
 
 function normalize(cfg) {
   const out = emptyConfig();
+  if (!cfg || typeof cfg !== "object") return out;
 
-  // Migrate to fleet-scoped shape (ships / fuel_dumps / drinax contract).
-  // Legacy configs carried ships/fuel_dumps at the top level and the drinax
-  // cut on a ship contract; lift both into fleet scope instead of dropping
-  // them. Fields are read explicitly (not Object.assign'd) so no stale
-  // top-level keys survive into the normalized config.
-  const fleetIn = (cfg && cfg.fleet) || {};
-  const rawShips = Array.isArray(fleetIn.ships) ? fleetIn.ships
-    : Array.isArray(cfg.ships) ? cfg.ships : null;
-
-  out.fleet.name = fleetIn.name || "";
-  out.fleet.ships = (rawShips || [emptyShip()]).map((s) => Object.assign(emptyShip(), s));
-  out.fleet.fuel_dumps = Array.isArray(fleetIn.fuel_dumps) ? fleetIn.fuel_dumps
-    : Array.isArray(cfg.fuel_dumps) ? deepCopy(cfg.fuel_dumps) : [];
-
-  out.fleet.contract = Object.assign({ type: "none" }, fleetIn.contract || {});
-  if (out.fleet.contract.type === "drinax" && out.fleet.contract.percentage == null) {
-    out.fleet.contract.percentage = 10;
-  }
-  // lift legacy ship-level drinax contracts AFTER merging fleet.contract so a
-  // fleet-level contract keeps its own percentage
-  out.fleet.ships.forEach((s) => {
-    if (s.contract && s.contract.type === "drinax") {
-      if (out.fleet.contract.type !== "drinax") {
-        out.fleet.contract = { type: "drinax", percentage: 10 };
+  // New shape: game-scoped (Game -> Fleets -> Ships).
+  if (cfg.game && typeof cfg.game === "object") {
+    out.game = normalizeGame(cfg.game);
+    // legacy top-level ships/fuel_dumps -> the game's first fleet (old exports)
+    if (Array.isArray(cfg.ships)) {
+      if (out.game.fleets.length && !out.game.fleets[0].ships.length) {
+        out.game.fleets[0].ships = cfg.ships.map((s) => Object.assign(emptyShip(), s));
+      } else if (!out.game.fleets.length) {
+        out.game.fleets.push({
+          name: out.game.name || "Fleet",
+          location: "",
+          ships: cfg.ships.map((s) => Object.assign(emptyShip(), s)),
+          fuel_dumps: Array.isArray(cfg.fuel_dumps) ? deepCopy(cfg.fuel_dumps) : [],
+          contract: { type: "none" },
+        });
       }
-      s.contract = { type: "none" };
     }
-  });
-
-  out.fleet.opening_balance = Number.isFinite(Number(fleetIn.opening_balance)) ? Number(fleetIn.opening_balance) : 0;
-  out.fleet.transactions = normalizeTxns(fleetIn.transactions);
+    if (Array.isArray(cfg.fuel_dumps) && out.game.fleets.length && !out.game.fleets[0].fuel_dumps.length) {
+      out.game.fleets[0].fuel_dumps = deepCopy(cfg.fuel_dumps);
+    }
+  } else if (cfg.fleet && typeof cfg.fleet === "object") {
+    // Legacy shape: fleet-scoped config; lift into a single-fleet game.
+    const f = cfg.fleet;
+    const contract = Object.assign({ type: "none" }, f.contract || {});
+    const ships = (Array.isArray(f.ships) ? f.ships : (Array.isArray(cfg.ships) ? cfg.ships : [emptyShip()]))
+      .map((s) => Object.assign(emptyShip(), s));
+    // lift legacy ship-level drinax contracts AFTER merging fleet.contract so a
+    // fleet-level contract keeps its own percentage
+    ships.forEach((s) => {
+      if (s.contract && s.contract.type === "drinax") {
+        if (contract.type !== "drinax") {
+          contract.type = "drinax";
+          contract.percentage = 10;
+        }
+        s.contract = { type: "none" };
+      }
+    });
+    if (contract.type === "drinax" && contract.percentage == null) contract.percentage = 10;
+    out.game = {
+      name: f.name || "Pirates of Drinax",
+      opening_balance: Number.isFinite(Number(f.opening_balance)) ? Number(f.opening_balance) : 0,
+      transactions: normalizeTxns(f.transactions),
+      fleets: [{
+        name: f.name || "",
+        location: "",
+        ships,
+        fuel_dumps: Array.isArray(f.fuel_dumps) ? deepCopy(f.fuel_dumps)
+          : (Array.isArray(cfg.fuel_dumps) ? deepCopy(cfg.fuel_dumps) : []),
+        contract,
+      }],
+    };
+  }
 
   ["stops", "avoid"].forEach((k) => {
     out[k] = Array.isArray(cfg[k]) ? deepCopy(cfg[k]) : [];
@@ -243,6 +296,35 @@ function crewRow(i, c, j) {
   </div>`;
 }
 
+// "Move ship to another fleet" row: shown when the current game has another
+// named fleet to move into.
+function shipMoveHTML(i) {
+  const current = (state.fleet && state.fleet.name) || "";
+  const others = ((state.game && state.game.fleets) || [])
+    .filter((f) => f.name && f.name !== current);
+  if (!others.length) return "";
+  return `<div class="ship-move-row">
+    <label class="ship-move-label">Move ship to
+      <select id="ship-move-${i}">
+        <option value="">— fleet —</option>
+        ${others.map((f) => `<option value="${esc(f.name)}">${esc(f.name)}</option>`).join("")}
+      </select>
+    </label>
+    <button class="ghost small" data-action="move-ship" data-index="${i}">Move</button>
+  </div>`;
+}
+
+function moveShip(i) {
+  if (!state.fleet) return;
+  const sel = document.getElementById("ship-move-" + i);
+  const target = sel ? sel.value : "";
+  if (!target) return;
+  const to = state.game.fleets.find((f) => f.name === target);
+  if (!to) return;
+  const moved = state.fleet.ships.splice(i, 1);
+  if (moved.length) to.ships.push(moved[0]);
+}
+
 function shipHTML(s, i) {
   const ct = (s.contract && s.contract.type) || "none";
   const opt = (v) => ct === v ? "selected" : "";
@@ -251,6 +333,7 @@ function shipHTML(s, i) {
       <input class="ship-name" data-path="fleet.ships.${i}.name" value="${esc(s.name)}">
       <button class="danger" data-action="remove-ship" data-index="${i}">Remove</button>
     </div>
+    ${shipMoveHTML(i)}
     <div class="ship-grid">
       <label>Monthly maint (Cr)<input type="number" data-path="fleet.ships.${i}.monthly_maint" value="${s.monthly_maint}"></label>
       <label>Fuel / jump<input type="number" data-path="fleet.ships.${i}.fuel_per_jump" value="${s.fuel_per_jump}"></label>
@@ -318,10 +401,12 @@ function syncFleetContractVisibility() {
 }
 
 function render() {
-  $("ships").innerHTML = state.fleet.ships.map((s, i) => shipHTML(s, i)).join("");
+  const ships = (state.fleet && state.fleet.ships) ? state.fleet.ships : [];
+  const fuelDumps = (state.fleet && state.fleet.fuel_dumps) ? state.fleet.fuel_dumps : [];
+  $("ships").innerHTML = ships.map((s, i) => shipHTML(s, i)).join("");
   renderList("stops", state.stops);
   renderList("avoid", state.avoid);
-  renderList("fueldumps", state.fleet.fuel_dumps);
+  renderList("fueldumps", fuelDumps);
   renderLocPickers();
   syncScalars();
   syncFleetContractVisibility();
@@ -539,6 +624,7 @@ document.addEventListener("input", (e) => {
   const el = e.target;
   if (el.classList && el.classList.contains("loc-search")) { onSearchInput(el); return; }
   if (el.dataset && el.dataset.path) {
+    if (el.dataset.path.startsWith("fleet.") && !state.fleet) return;
     setByPath(state, el.dataset.path, coerce(el));
     // keep the search label in sync when a custom hex is typed directly
     if (el.classList && el.classList.contains("loc-hex")) {
@@ -550,6 +636,7 @@ document.addEventListener("input", (e) => {
 });
 document.addEventListener("change", (e) => {
   const el = e.target;
+  if (el.dataset && el.dataset.path && el.dataset.path.startsWith("fleet.") && !state.fleet) return;
   if (el.type === "checkbox" && el.dataset && el.dataset.path) {
     setByPath(state, el.dataset.path, el.checked);
   }
@@ -572,30 +659,127 @@ document.addEventListener("click", (e) => {
   const rj = parseInt(t.dataset.row, 10);
 
   switch (a) {
-    case "remove-ship": state.fleet.ships.splice(i, 1); render(); break;
-    case "add-crew": state.fleet.ships[si].crew.push({ name: "", salary: 0, passage: "middle" }); render(); break;
-    case "remove-crew": state.fleet.ships[si].crew.splice(rj, 1); render(); break;
-    case "add-berth": state.fleet.ships[si].berths.push({ type: "standard", number: 1 }); render(); break;
-    case "remove-berth": state.fleet.ships[si].berths.splice(rj, 1); render(); break;
+    case "remove-ship": if (state.fleet) state.fleet.ships.splice(i, 1); render(); break;
+    case "add-crew": if (state.fleet && state.fleet.ships[si]) state.fleet.ships[si].crew.push({ name: "", salary: 0, passage: "middle" }); render(); break;
+    case "remove-crew": if (state.fleet && state.fleet.ships[si]) state.fleet.ships[si].crew.splice(rj, 1); render(); break;
+    case "add-berth": if (state.fleet && state.fleet.ships[si]) state.fleet.ships[si].berths.push({ type: "standard", number: 1 }); render(); break;
+    case "remove-berth": if (state.fleet && state.fleet.ships[si]) state.fleet.ships[si].berths.splice(rj, 1); render(); break;
     case "remove-stop": state.stops.splice(i, 1); render(); break;
     case "remove-avoid": state.avoid.splice(i, 1); render(); break;
-    case "remove-fueldump": state.fleet.fuel_dumps.splice(i, 1); render(); break;
+    case "remove-fueldump": if (state.fleet) state.fleet.fuel_dumps.splice(i, 1); render(); break;
+    case "move-ship": moveShip(i); render(); break;
   }
 });
 
-// ---------------------------------------------------------------- fleet save/load
-const FLEETS_KEY = "travellerweb.fleets";
-const loadFleets = () => {
-  try { return JSON.parse(localStorage.getItem(FLEETS_KEY)) || {}; } catch (_) { return {}; }
+// ---------------------------------------------------------------- games
+// Data model: localStorage 'travellerweb.games' maps game name -> game, where
+// game = { name, opening_balance, transactions, fleets: [{name, location, ships}] }.
+const GAMES_KEY = "travellerweb.games";
+const LEGACY_FLEETS_KEY = "travellerweb.fleets";
+const loadGames = () => {
+  try { return JSON.parse(localStorage.getItem(GAMES_KEY)) || {}; } catch (_) { return {}; }
 };
-const persistFleets = (f) => localStorage.setItem(FLEETS_KEY, JSON.stringify(f));
-const fleetCount = (f) => (Array.isArray(f) ? f.length : (f.ships ? f.ships.length : 0));
+const persistGames = (g) => localStorage.setItem(GAMES_KEY, JSON.stringify(g));
 
+const gameFleetCount = (g) => (Array.isArray(g && g.fleets) ? g.fleets.length : 0);
+
+function savedGameOptions() {
+  const games = loadGames();
+  return Object.keys(games).sort().map((n) => {
+    const c = gameFleetCount(games[n]);
+    return `<option value="${esc(n)}">${esc(n)} (${c} fleet${c === 1 ? "" : "s"})</option>`;
+  }).join("");
+}
+
+// Fill the two game dropdowns (Fleets tab + Route tab) and sync their values.
+function refreshGameSelect() {
+  const opts = savedGameOptions();
+  const gs = $("game-select");
+  if (gs) gs.innerHTML = '<option value="">— saved games —</option>' + opts;
+  const rgs = $("route-game-select");
+  if (rgs) rgs.innerHTML = '<option value="">— choose saved game —</option>' + opts;
+  syncGameUI();
+}
+
+function syncGameUI() {
+  const current = (state.game && state.game.name) || "";
+  const games = loadGames();
+  const active = (current && games[current]) ? current : "";
+  const gs = $("game-select");
+  if (gs) gs.value = active;
+  const rgs = $("route-game-select");
+  if (rgs) rgs.value = active;
+  refreshFleetSelect();
+}
+
+// Load a saved game by name into state.game, re-pointing state.fleet at its
+// first fleet. Returns true on success.
+function loadGameByName(name) {
+  const games = loadGames();
+  const saved = games[name];
+  if (!saved) return false;
+  state.game = normalizeGame(saved);
+  state.fleet = (state.game.fleets && state.game.fleets.length) ? state.game.fleets[0] : null;
+  syncGameUI();
+  return true;
+}
+
+// Persist the current in-memory game under its own name. No-op (false) when
+// the game has no name yet.
+function persistCurrentGame() {
+  if (!state.game || !state.game.name) return false;
+  const games = loadGames();
+  games[state.game.name] = deepCopy(state.game);
+  persistGames(games);
+  return true;
+}
+
+$("save-game").addEventListener("click", () => {
+  const name = $("game-name").value.trim();
+  if (!name) return alert("Enter a game name first");
+  if (!state.game.fleets.length) return alert("Nothing to save — add a fleet first");
+  state.game.name = name;
+  const games = loadGames();
+  games[name] = deepCopy(state.game);
+  persistGames(games);
+  refreshGameSelect();
+  $("game-name").value = "";
+});
+
+$("load-game").addEventListener("click", () => {
+  const name = $("game-select").value;
+  if (!name) return;
+  if (loadGameByName(name)) render();
+});
+
+$("route-game-select").addEventListener("change", () => {
+  const name = $("route-game-select").value;
+  if (!name) return;
+  if (loadGameByName(name)) render();
+});
+
+$("delete-game").addEventListener("click", () => {
+  const name = $("game-select").value;
+  if (!name) return;
+  if (!confirm(`Delete saved game "${name}"?`)) return;
+  const games = loadGames();
+  delete games[name];
+  persistGames(games);
+  refreshGameSelect();
+});
+
+// ---------------------------------------------------------------- fleet save/load
+const fleetShipCount = (f) => (Array.isArray(f && f.ships) ? f.ships.length : 0);
+
+// Fleets live inside the current game: state.game.fleets is an array of
+// {name, location, ships, fuel_dumps, contract}.
 function savedFleetOptions() {
-  const fleets = loadFleets();
-  return Object.keys(fleets).sort().map((n) => {
-    const c = fleetCount(fleets[n]);
-    return `<option value="${esc(n)}">${esc(n)} (${c} ship${c === 1 ? "" : "s"})</option>`;
+  const fleets = ((state.game && state.game.fleets) || [])
+    .filter((f) => f && f.name)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return fleets.map((f) => {
+    const c = fleetShipCount(f);
+    return `<option value="${esc(f.name)}">${esc(f.name)} (${c} ship${c === 1 ? "" : "s"})</option>`;
   }).join("");
 }
 
@@ -606,45 +790,31 @@ function refreshFleetSelect() {
   syncFleetUI();
 }
 
-// Keep the two fleet dropdowns (Fleets tab + Route tab) and the "Current fleet"
-// hint in sync with state.fleet.
+// Keep the two fleet dropdowns (Fleets tab + Route tab), the location field
+// and the "Current fleet" hint in sync with state.fleet.
 function syncFleetUI() {
-  const current = state.fleet.name;
-  const fleets = loadFleets();
-  const active = (current && fleets[current]) ? current : "";
+  const current = (state.fleet && state.fleet.name) || "";
+  const fleets = (state.game && state.game.fleets) || [];
+  const active = fleets.some((f) => f.name === current) ? current : "";
   $("fleet-select").value = active;
   $("route-fleet-select").value = active;
+  const locEl = $("fleet-location");
+  if (locEl && document.activeElement !== locEl) locEl.value = (state.fleet && state.fleet.location) || "";
   const status = $("route-fleet-status");
   if (status) {
-    const c = (state.fleet.ships || []).length;
+    const c = (state.fleet && state.fleet.ships) ? state.fleet.ships.length : 0;
     status.textContent = `Current fleet: ${current || "unnamed"} (${c} ship${c === 1 ? "" : "s"})`;
   }
 }
 
-// Load a saved fleet by name into state.fleet (migrating legacy bare-array
-// saves). Returns true on success. Shared by the Fleets tab "Load" button and
-// the Route tab fleet dropdown.
+// Load a fleet by name from the current game into state.fleet as a live
+// reference (edits land straight in the game). Returns true on success.
+// Shared by the Fleets tab "Load" button and the Route tab fleet dropdown.
 function loadFleetByName(name) {
-  const fleets = loadFleets();
-  const saved = fleets[name];
-  if (!saved) return false;
-  if (Array.isArray(saved)) {
-    // migrate pre-fleet-scoping saves (a bare array of ships); lift any
-    // ship-level drinax contract to fleet scope, exactly like normalize().
-    // Legacy saves carried no fuel dumps or fleet contract, so keep the
-    // currently configured ones rather than discarding them.
-    const ships = saved.map((s) => Object.assign(emptyShip(), s));
-    let contract = deepCopy(state.fleet.contract || { type: "none" });
-    ships.forEach((s) => {
-      if (s.contract && s.contract.type === "drinax") {
-        contract = { type: "drinax", percentage: 10 };
-        s.contract = { type: "none" };
-      }
-    });
-    state.fleet = { name, ships, fuel_dumps: deepCopy(state.fleet.fuel_dumps), contract };
-  } else {
-    state.fleet = deepCopy(saved);
-  }
+  if (!state.game) return false;
+  const idx = state.game.fleets.findIndex((f) => f.name === name);
+  if (idx < 0) return false;
+  state.fleet = state.game.fleets[idx];
   ensureLedger();
   return true;
 }
@@ -652,13 +822,16 @@ function loadFleetByName(name) {
 $("save-fleet").addEventListener("click", () => {
   const name = $("fleet-name").value.trim();
   if (!name) return alert("Enter a fleet name first");
-  if (!state.fleet.ships.length) return alert("Nothing to save — add some ships first");
-  const fleets = loadFleets();
+  if (!state.fleet || !state.fleet.ships.length) return alert("Nothing to save — add some ships first");
+  const location = $("fleet-location").value.trim();
   const toSave = deepCopy(state.fleet);
   toSave.name = name;
-  state.fleet.name = name;
-  fleets[name] = toSave;
-  persistFleets(fleets);
+  toSave.location = location;
+  const idx = state.game.fleets.findIndex((f) => f.name === name);
+  if (idx >= 0) state.game.fleets[idx] = toSave;
+  else state.game.fleets.push(toSave);
+  state.fleet = state.game.fleets[idx >= 0 ? idx : state.game.fleets.length - 1];
+  if (!persistCurrentGame()) alert("Save the game first — give it a name on the Games bar");
   refreshFleetSelect();
   $("fleet-name").value = "";
 });
@@ -679,9 +852,9 @@ $("delete-fleet").addEventListener("click", () => {
   const name = $("fleet-select").value;
   if (!name) return;
   if (!confirm(`Delete saved fleet "${name}"?`)) return;
-  const fleets = loadFleets();
-  delete fleets[name];
-  persistFleets(fleets);
+  state.game.fleets = state.game.fleets.filter((f) => f.name !== name);
+  if (state.fleet && state.fleet.name === name) state.fleet = state.game.fleets[0] || null;
+  persistCurrentGame();
   refreshFleetSelect();
 });
 
@@ -728,31 +901,31 @@ function normalizeTxns(list) {
 }
 
 function ensureLedger() {
-  if (typeof state.fleet.opening_balance !== "number" || !isFinite(state.fleet.opening_balance)) state.fleet.opening_balance = 0;
-  if (!Array.isArray(state.fleet.transactions)) state.fleet.transactions = [];
+  if (typeof state.game.opening_balance !== "number" || !isFinite(state.game.opening_balance)) state.game.opening_balance = 0;
+  if (!Array.isArray(state.game.transactions)) state.game.transactions = [];
 }
 
 const fmtDate = (t) => String(t.day).padStart(3, "0") + "-" + String(t.year);
 let lastDay = 1, lastYear = 1105; // prefill the add-form with the most recent in-game date
 
 function txTotals() {
-  const txs = state.fleet.transactions || [];
+  const txs = state.game.transactions || [];
   let income = 0, expense = 0;
   txs.forEach((t) => { if (t.type === "income") income += t.amount; else expense += t.amount; });
-  return { income, expense, balance: (state.fleet.opening_balance || 0) + income - expense };
+  return { income, expense, balance: (state.game.opening_balance || 0) + income - expense };
 }
 
 function renderTxns() {
   ensureLedger();
   const openEl = $("tx-opening");
-  if (openEl && document.activeElement !== openEl) openEl.value = (state.fleet.opening_balance || 0);
+  if (openEl && document.activeElement !== openEl) openEl.value = (state.game.opening_balance || 0);
 
-  $("tx-fleet-label").textContent = `Money for fleet “${state.fleet.name || "unnamed"}” — each saved fleet keeps its own transactions; Save on the Fleets tab to keep changes.`;
+  $("tx-fleet-label").textContent = `Money for game “${state.game.name || "unnamed"}” — the game keeps one ledger for all its fleets; Save on the Fleets tab to keep changes.`;
 
-  const txs = state.fleet.transactions;
+  const txs = state.game.transactions;
   const sorted = txs.map((t, i) => ({ t, i })).sort((a, b) =>
     (a.t.year - b.t.year) || (a.t.day - b.t.day) || (a.i - b.i));
-  let running = state.fleet.opening_balance || 0;
+  let running = state.game.opening_balance || 0;
   const rows = sorted.map(({ t }) => {
     running += t.type === "income" ? t.amount : -t.amount;
     return `<tr data-tx-id="${esc(t.id)}">
@@ -771,7 +944,7 @@ function renderTxns() {
 
   const totals = txTotals();
   $("tx-summary").innerHTML = `
-    <div class="tx-chip">Opening <strong>${signedCr(state.fleet.opening_balance || 0)}</strong></div>
+    <div class="tx-chip">Opening <strong>${signedCr(state.game.opening_balance || 0)}</strong></div>
     <div class="tx-chip income">In <strong>+${fmtCr(totals.income)}</strong></div>
     <div class="tx-chip expense">Spent <strong>−${fmtCr(totals.expense)}</strong></div>
     <div class="tx-chip balance">Balance <strong>${signedCr(totals.balance)}</strong></div>`;
@@ -781,7 +954,7 @@ function renderTxns() {
         <thead><tr><th>Day</th><th>Type</th><th>Category</th><th>Note</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>`
-    : '<p class="hint">No transactions for this fleet yet — add one above.</p>';
+    : '<p class="hint">No transactions for this game yet — add one above.</p>';
 }
 
 let editingTxId = null;
@@ -809,10 +982,10 @@ $("tx-add").addEventListener("click", () => {
   ensureLedger();
   const patch = { day, year, type, amount, category: $("tx-category").value.trim(), note: $("tx-note").value.trim() };
   if (editingTxId) {
-    const t = state.fleet.transactions.find((x) => x.id === editingTxId);
+    const t = state.game.transactions.find((x) => x.id === editingTxId);
     if (t) Object.assign(t, patch);
   } else {
-    state.fleet.transactions.push({ id: txId(), ...patch });
+    state.game.transactions.push({ id: txId(), ...patch });
   }
   lastDay = day; lastYear = year;
   renderTxns();
@@ -823,7 +996,7 @@ $("tx-cancel").addEventListener("click", resetTxForm);
 
 $("tx-opening").addEventListener("input", () => {
   const v = parseFloat($("tx-opening").value);
-  state.fleet.opening_balance = isFinite(v) ? v : 0;
+  state.game.opening_balance = isFinite(v) ? v : 0;
   renderTxns();
 });
 
@@ -832,7 +1005,7 @@ $("tx-list").addEventListener("click", (e) => {
   if (!btn) return;
   const id = btn.dataset.id;
   if (btn.dataset.action === "edit-tx") {
-    const t = (state.fleet.transactions || []).find((x) => x.id === id);
+    const t = (state.game.transactions || []).find((x) => x.id === id);
     if (!t) return;
     editingTxId = id;
     $("tx-day").value = t.day;
@@ -845,18 +1018,139 @@ $("tx-list").addEventListener("click", (e) => {
     $("tx-cancel").hidden = false;
   } else if (btn.dataset.action === "delete-tx") {
     if (!confirm("Delete this transaction?")) return;
-    state.fleet.transactions = (state.fleet.transactions || []).filter((x) => x.id !== id);
+    state.game.transactions = (state.game.transactions || []).filter((x) => x.id !== id);
     renderTxns();
   }
 });
 
+// ---------------------------------------------------------------- buy
+// Item catalogue loaded from items.json (fetch). Buying posts an expense
+// transaction to the current game's ledger.
+let catalogue = [];
+let catalogueLoaded = false;
+let selectedItemId = null;
+
+function loadCatalogue() {
+  if (catalogueLoaded) return Promise.resolve(catalogue);
+  catalogueLoaded = true;
+  return fetch("items.json")
+    .then((r) => {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then((d) => {
+      catalogue = Array.isArray(d) ? d : [];
+      renderBuyList();
+      return catalogue;
+    })
+    .catch((err) => {
+      catalogueLoaded = false;
+      console.error("items fetch failed:", err);
+      const list = $("buy-list");
+      if (list) list.innerHTML = '<p class="hint">Could not load item catalogue.</p>';
+      return [];
+    });
+}
+
+function buyCategories() {
+  const seen = {};
+  catalogue.forEach((it) => { if (it && it.category) seen[it.category] = true; });
+  return Object.keys(seen).sort();
+}
+
+function itemStatsHTML(it) {
+  const stats = it.stats || {};
+  const parts = Object.keys(stats)
+    .map((k) => `${k}: ${Array.isArray(stats[k]) ? stats[k].join(", ") : stats[k]}`);
+  return parts.length ? `<div class="buy-item-stats">${esc(parts.join(" · "))}</div>` : "";
+}
+
+// NOTE (XSS): all interpolated values below are escaped via esc() (see the
+// render-section note); numbers are rendered through String() coercion.
+function renderBuyList() {
+  const cats = buyCategories();
+  const cur = $("buy-category").value;
+  $("buy-category").innerHTML = '<option value="">All categories</option>' +
+    cats.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+  $("buy-category").value = cats.includes(cur) ? cur : "";
+
+  const q = ($("buy-search").value || "").trim().toLowerCase();
+  const cat = $("buy-category").value;
+  const items = catalogue.filter((it) => {
+    if (!it) return false;
+    if (cat && it.category !== cat) return false;
+    if (!q) return true;
+    return String(it.name || "").toLowerCase().includes(q)
+      || String(it.category || "").toLowerCase().includes(q)
+      || String(it.id || "").toLowerCase().includes(q);
+  });
+
+  $("buy-list").innerHTML = items.length
+    ? items.map((it) => {
+        const sel = it.id === selectedItemId ? " selected" : "";
+        return `<div class="buy-item${sel}" data-item-id="${esc(it.id)}">
+          <div class="buy-item-head">
+            <strong>${esc(it.name)}</strong>
+            <span class="buy-item-meta">${esc(it.category || "")} · TL ${esc(it.tl != null ? it.tl : "—")} · ${esc(it.mass != null ? it.mass + " kg" : "—")} · <span class="buy-cost">Cr ${esc(it.cost != null ? it.cost : "—")}</span></span>
+          </div>
+          ${itemStatsHTML(it)}
+        </div>`;
+      }).join("")
+    : '<p class="hint">No items match.</p>';
+}
+
+$("buy-search").addEventListener("input", renderBuyList);
+$("buy-category").addEventListener("change", renderBuyList);
+$("buy-list").addEventListener("click", (e) => {
+  const row = e.target.closest(".buy-item");
+  if (!row) return;
+  selectedItemId = row.dataset.itemId;
+  renderBuyList();
+});
+
+$("buy-btn").addEventListener("click", () => {
+  const item = catalogue.find((it) => it && it.id === selectedItemId);
+  if (!item) return alert("Select an item first");
+  const qty = Math.max(1, parseInt($("buy-qty").value, 10) || 1);
+  ensureLedger();
+  const t = {
+    id: txId(),
+    day: lastDay,
+    year: lastYear,
+    type: "expense",
+    amount: item.cost * qty,
+    category: item.category || "",
+    note: qty + " x " + item.name,
+  };
+  state.game.transactions.push(t);
+  renderTxns();
+  $("buy-qty").value = 1;
+});
+
 // ---------------------------------------------------------------- actions
-$("load-preset").addEventListener("click", () => { state = deepCopy(DEFAULT_CONFIG); render(); });
-$("clear-all").addEventListener("click", () => { state = emptyConfig(); render(); });
-$("add-ship").addEventListener("click", () => { state.fleet.ships.push(emptyShip()); render(); });
+function ensureFleet() {
+  if (state.fleet) return state.fleet;
+  state.game.fleets.push({ name: "", location: "", ships: [], fuel_dumps: [], contract: { type: "none" } });
+  state.fleet = state.game.fleets[state.game.fleets.length - 1];
+  return state.fleet;
+}
+
+$("load-preset").addEventListener("click", () => {
+  state = deepCopy(DEFAULT_CONFIG);
+  state.fleet = state.game.fleets[0] || null;
+  refreshGameSelect();
+  render();
+});
+$("clear-all").addEventListener("click", () => {
+  state = emptyConfig();
+  state.fleet = null;
+  refreshGameSelect();
+  render();
+});
+$("add-ship").addEventListener("click", () => { ensureFleet(); state.fleet.ships.push(emptyShip()); render(); });
 $("add-stop").addEventListener("click", () => { state.stops.push({ sector: "", hex: "" }); render(); });
 $("add-avoid").addEventListener("click", () => { state.avoid.push({ sector: "", hex: "" }); render(); });
-$("add-fueldump").addEventListener("click", () => { state.fleet.fuel_dumps.push({ sector: "", hex: "" }); render(); });
+$("add-fueldump").addEventListener("click", () => { ensureFleet(); state.fleet.fuel_dumps.push({ sector: "", hex: "" }); render(); });
 
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === t));
@@ -864,8 +1158,10 @@ document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () 
   $("tab-route").hidden = t.dataset.tab !== "route";
   $("tab-json").hidden = t.dataset.tab !== "json";
   $("tab-txs").hidden = t.dataset.tab !== "txs";
+  $("tab-buy").hidden = t.dataset.tab !== "buy";
   if (t.dataset.tab === "json") $("json-editor").value = JSON.stringify(state, null, 2);
   if (t.dataset.tab === "txs") renderTxns();
+  if (t.dataset.tab === "buy") loadCatalogue();
 }));
 
 $("export-json").addEventListener("click", () => {
@@ -875,6 +1171,8 @@ $("load-json").addEventListener("click", () => {
   try {
     const parsed = JSON.parse($("json-editor").value);
     state = normalize(parsed);
+    state.fleet = (state.game.fleets && state.game.fleets.length) ? state.game.fleets[0] : null;
+    refreshGameSelect();
     render();
     document.querySelector('[data-tab="route"]').click();
   } catch (err) {
@@ -987,9 +1285,46 @@ $("copy-markdown").addEventListener("click", async () => {
 });
 
 // ---------------------------------------------------------------- init
+// One-time migration: if the old 'travellerweb.fleets' key exists and no games
+// have been saved yet, fold every saved fleet into a default 'Pirates of
+// Drinax' game (fleets keep name + ships; the game sums fleet opening balances
+// and concatenates fleet transactions, preserving day/year), persist it under
+// the new key, then drop the old key.
+function migrateLegacyData() {
+  if (localStorage.getItem(GAMES_KEY)) return;
+  let legacy;
+  try { legacy = JSON.parse(localStorage.getItem(LEGACY_FLEETS_KEY)); } catch (_) { legacy = null; }
+  if (!legacy || typeof legacy !== "object" || Array.isArray(legacy)) return;
+  const names = Object.keys(legacy).filter((n) => legacy[n] && typeof legacy[n] === "object");
+  if (!names.length) return;
+
+  const game = { name: "Pirates of Drinax", opening_balance: 0, transactions: [], fleets: [] };
+  names.forEach((n) => {
+    const f = legacy[n];
+    game.fleets.push({
+      name: n,
+      location: "",
+      ships: Array.isArray(f.ships) ? f.ships : [],
+      fuel_dumps: Array.isArray(f.fuel_dumps) ? f.fuel_dumps : [],
+      contract: (f.contract && typeof f.contract === "object") ? f.contract : { type: "none" },
+    });
+    if (Number.isFinite(Number(f.opening_balance))) game.opening_balance += Number(f.opening_balance);
+    if (Array.isArray(f.transactions)) {
+      game.transactions = game.transactions.concat(normalizeTxns(f.transactions));
+    }
+  });
+
+  const games = loadGames();
+  games[game.name] = game;
+  persistGames(games);
+  localStorage.removeItem(LEGACY_FLEETS_KEY);
+}
+
 function init() {
-  refreshFleetSelect();
+  migrateLegacyData();
+  refreshGameSelect();
   resetTxForm();
   render();
+  loadCatalogue();
 }
 init();
