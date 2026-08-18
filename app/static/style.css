@@ -75,6 +75,10 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color:
 .fleet-bar #fleet-name { flex: 0 1 180px; }
 .fleet-bar #fleet-select { flex: 0 1 280px; }
 
+.route-fleet-bar { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 16px; }
+.route-fleet-bar label { flex: 0 1 260px; }
+.route-fleet-bar .hint { align-self: center; }
+
 .fleet-contract {
   display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;
   background: var(--panel-2); border: 1px solid var(--border);

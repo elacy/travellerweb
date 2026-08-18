@@ -318,6 +318,7 @@ function render() {
   renderLocPickers();
   syncScalars();
   syncFleetContractVisibility();
+  syncFleetUI();
   enrichLabels();
 }
 
@@ -580,16 +581,63 @@ const loadFleets = () => {
   try { return JSON.parse(localStorage.getItem(FLEETS_KEY)) || {}; } catch (_) { return {}; }
 };
 const persistFleets = (f) => localStorage.setItem(FLEETS_KEY, JSON.stringify(f));
+const fleetCount = (f) => (Array.isArray(f) ? f.length : (f.ships ? f.ships.length : 0));
+
+function savedFleetOptions() {
+  const fleets = loadFleets();
+  return Object.keys(fleets).sort().map((n) => {
+    const c = fleetCount(fleets[n]);
+    return `<option value="${esc(n)}">${esc(n)} (${c} ship${c === 1 ? "" : "s"})</option>`;
+  }).join("");
+}
 
 function refreshFleetSelect() {
+  const opts = savedFleetOptions();
+  $("fleet-select").innerHTML = '<option value="">— saved fleets —</option>' + opts;
+  $("route-fleet-select").innerHTML = '<option value="">— choose saved fleet —</option>' + opts;
+  syncFleetUI();
+}
+
+// Keep the two fleet dropdowns (Fleets tab + Route tab) and the "Current fleet"
+// hint in sync with state.fleet.
+function syncFleetUI() {
+  const current = state.fleet.name;
   const fleets = loadFleets();
-  const names = Object.keys(fleets).sort();
-  const fleetCount = (f) => (Array.isArray(f) ? f.length : (f.ships ? f.ships.length : 0));
-  $("fleet-select").innerHTML = '<option value="">— saved fleets —</option>' +
-    names.map((n) => {
-      const c = fleetCount(fleets[n]);
-      return `<option value="${esc(n)}">${esc(n)} (${c} ship${c === 1 ? "" : "s"})</option>`;
-    }).join("");
+  const active = (current && fleets[current]) ? current : "";
+  $("fleet-select").value = active;
+  $("route-fleet-select").value = active;
+  const status = $("route-fleet-status");
+  if (status) {
+    const c = (state.fleet.ships || []).length;
+    status.textContent = `Current fleet: ${current || "unnamed"} (${c} ship${c === 1 ? "" : "s"})`;
+  }
+}
+
+// Load a saved fleet by name into state.fleet (migrating legacy bare-array
+// saves). Returns true on success. Shared by the Fleets tab "Load" button and
+// the Route tab fleet dropdown.
+function loadFleetByName(name) {
+  const fleets = loadFleets();
+  const saved = fleets[name];
+  if (!saved) return false;
+  if (Array.isArray(saved)) {
+    // migrate pre-fleet-scoping saves (a bare array of ships); lift any
+    // ship-level drinax contract to fleet scope, exactly like normalize().
+    // Legacy saves carried no fuel dumps or fleet contract, so keep the
+    // currently configured ones rather than discarding them.
+    const ships = saved.map((s) => Object.assign(emptyShip(), s));
+    let contract = deepCopy(state.fleet.contract || { type: "none" });
+    ships.forEach((s) => {
+      if (s.contract && s.contract.type === "drinax") {
+        contract = { type: "drinax", percentage: 10 };
+        s.contract = { type: "none" };
+      }
+    });
+    state.fleet = { name, ships, fuel_dumps: deepCopy(state.fleet.fuel_dumps), contract };
+  } else {
+    state.fleet = deepCopy(saved);
+  }
+  return true;
 }
 
 $("save-fleet").addEventListener("click", () => {
@@ -599,38 +647,23 @@ $("save-fleet").addEventListener("click", () => {
   const fleets = loadFleets();
   const toSave = deepCopy(state.fleet);
   toSave.name = name;
+  state.fleet.name = name;
   fleets[name] = toSave;
   persistFleets(fleets);
   refreshFleetSelect();
-  $("fleet-select").value = name;
   $("fleet-name").value = "";
 });
 
 $("load-fleet").addEventListener("click", () => {
   const name = $("fleet-select").value;
   if (!name) return;
-  const fleets = loadFleets();
-  const saved = fleets[name];
-  if (saved) {
-    if (Array.isArray(saved)) {
-      // migrate pre-fleet-scoping saves (a bare array of ships); lift any
-      // ship-level drinax contract to fleet scope, exactly like normalize().
-      // Legacy saves carried no fuel dumps or fleet contract, so keep the
-      // currently configured ones rather than discarding them.
-      const ships = saved.map((s) => Object.assign(emptyShip(), s));
-      let contract = deepCopy(state.fleet.contract || { type: "none" });
-      ships.forEach((s) => {
-        if (s.contract && s.contract.type === "drinax") {
-          contract = { type: "drinax", percentage: 10 };
-          s.contract = { type: "none" };
-        }
-      });
-      state.fleet = { name, ships, fuel_dumps: deepCopy(state.fleet.fuel_dumps), contract };
-    } else {
-      state.fleet = deepCopy(saved);
-    }
-    render();
-  }
+  if (loadFleetByName(name)) render();
+});
+
+$("route-fleet-select").addEventListener("change", () => {
+  const name = $("route-fleet-select").value;
+  if (!name) return;
+  if (loadFleetByName(name)) render();
 });
 
 $("delete-fleet").addEventListener("click", () => {
@@ -667,7 +700,7 @@ $("load-json").addEventListener("click", () => {
     const parsed = JSON.parse($("json-editor").value);
     state = normalize(parsed);
     render();
-    document.querySelector('[data-tab="fleet"]').click();
+    document.querySelector('[data-tab="route"]').click();
   } catch (err) {
     alert("Invalid JSON: " + err.message);
   }
