@@ -60,6 +60,14 @@ def api_systems(sector: str):
     return {"sector": sector, "systems": systems}
 
 
+@app.get("/api/search")
+def api_search(q: str = ""):
+    try:
+        return planner.search(q)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Search failed: {exc}")
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))

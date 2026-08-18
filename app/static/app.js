@@ -35,22 +35,10 @@ function coerce(el) {
 }
 
 // ---------------------------------------------------------------- globals
-let sectorList = [];          // [{name, abbreviation}]
 const systemsCache = {};      // sector -> [{hex, name, uwp}]
 const systemsPending = {};    // sector -> Promise
 
 // ---------------------------------------------------------------- sector/system data
-async function loadSectors() {
-  try {
-    const resp = await fetch("/api/sectors");
-    const data = await resp.json();
-    sectorList = (data.sectors || []).filter((s) => s && s.name);
-  } catch (e) {
-    console.error("Failed to load sectors:", e);
-    sectorList = [];
-  }
-}
-
 function getSystems(sector) {
   if (systemsCache[sector]) return Promise.resolve(systemsCache[sector]);
   if (systemsPending[sector]) return systemsPending[sector];
@@ -301,8 +289,7 @@ function renderList(containerId, arr) {
   const base = containerId === "fueldumps" ? "fleet.fuel_dumps" : containerId;
   $(containerId).innerHTML = arr.map((it, j) => `
     <div class="list-row">
-      <select data-path="${base}.${j}.sector" data-kind="sector"></select>
-      <select data-path="${base}.${j}.hex" data-kind="hex"></select>
+      <div class="loc-picker-cell">${locPickerHTML(`${base}.${j}`)}</div>
       <button class="danger" data-action="remove-${list}" data-index="${j}">✕</button>
     </div>`).join("");
 }
@@ -328,64 +315,232 @@ function render() {
   renderList("stops", state.stops);
   renderList("avoid", state.avoid);
   renderList("fueldumps", state.fleet.fuel_dumps);
+  renderLocPickers();
   syncScalars();
-  populateSectorSelects();
-  populateHexSelects();
   syncFleetContractVisibility();
+  enrichLabels();
 }
 
-// ---------------------------------------------------------------- dropdowns
-function populateSectorSelects() {
-  document.querySelectorAll('select[data-kind="sector"]').forEach((el) => {
-    const current = getByPath(state, el.dataset.path);
-    const opts = ['<option value="">— sector —</option>']
-      .concat(sectorList.map((s) =>
-        `<option value="${esc(s.name)}" ${s.name === current ? "selected" : ""}>${esc(s.name)}</option>`))
-      .join("");
-    el.innerHTML = opts;
-    el.value = current || "";
+// ---------------------------------------------------------------- location picker
+// Each location (start / stop / avoid / fuel dump) is one text-search box that
+// resolves a system (globally, showing its sector for disambiguation) or a
+// sector (which then exposes a free-text hex field for a custom hex). NOTE
+// (XSS): every interpolated value below is escaped via esc() (&, ", <, >).
+const worldNames = {};   // "sector|hex" -> world name (cosmetic display only)
+const searchCache = {};  // query -> {sectors, worlds}
+
+function labelFor(loc) {
+  if (!loc || !loc.sector) return "";
+  const name = loc.hex ? worldNames[`${loc.sector}|${loc.hex}`] : null;
+  return name ? `${name} — ${loc.sector}` : loc.sector;
+}
+
+function locPickerHTML(path) {
+  const loc = getByPath(state, path) || { sector: "", hex: "" };
+  const showHex = !!loc.sector;
+  return `<div class="loc-picker" data-loc-path="${esc(path)}">
+    <input class="loc-search" type="text" placeholder="Search system or sector…" value="${esc(labelFor(loc))}" autocomplete="off" spellcheck="false">
+    <div class="loc-results" hidden></div>
+    <div class="loc-hex-row" ${showHex ? "" : "hidden"}>
+      <span class="loc-hint">Hex</span>
+      <input class="loc-hex" type="text" data-path="${esc(path)}.hex" placeholder="e.g. 2221" value="${esc(loc.hex)}" inputmode="numeric" maxlength="4" autocomplete="off" spellcheck="false">
+    </div>
+  </div>`;
+}
+
+function renderLocPickers() {
+  const startEl = $("start-loc");
+  if (startEl) startEl.innerHTML = locPickerHTML("start");
+}
+
+// Best-effort: resolve world names for already-set hexes so the search box
+// shows "Regina — Spinward Marches" instead of just the sector. Runs after
+// every render; systemsCache makes it cheap.
+function enrichLabels() {
+  document.querySelectorAll(".loc-picker").forEach((picker) => {
+    const path = picker.dataset.locPath;
+    const loc = getByPath(state, path) || {};
+    if (!loc.sector || !loc.hex) return;
+    const key = `${loc.sector}|${loc.hex}`;
+    if (worldNames[key]) return;
+    const input = picker.querySelector(".loc-search");
+    getSystems(loc.sector).then((systems) => {
+      const s = systems.find((x) => x.hex === loc.hex);
+      if (s && s.name) worldNames[key] = s.name;
+      const cur = getByPath(state, path) || {};
+      if (cur.sector === loc.sector && cur.hex === loc.hex
+          && input && document.body.contains(input)
+          && document.activeElement !== input) {
+        input.value = labelFor(cur);
+      }
+    }).catch(() => {});
   });
 }
 
-async function populateHexSelect(hexEl) {
-  const sectorPath = hexEl.dataset.path.replace(/\.hex$/, ".sector");
-  const sector = getByPath(state, sectorPath);
-  const currentHex = getByPath(state, hexEl.dataset.path);
-  let opts = '<option value="">— system —</option>';
-  if (sector) {
-    const systems = await getSystems(sector);
-    if (!document.body.contains(hexEl)) return;          // stale element
-    if (getByPath(state, sectorPath) !== sector) return;  // sector changed under us
-    if (systems.length === 0) {
-      opts = '<option value="">(no systems found)</option>';
-    } else {
-      opts += systems.map((s) =>
-        `<option value="${s.hex}" ${s.hex === currentHex ? "selected" : ""}>${esc(s.name || s.hex)}</option>`).join("");
-    }
-  }
-  hexEl.innerHTML = opts;
-  hexEl.value = currentHex || "";
+async function runSearch(q) {
+  const key = q.trim().toLowerCase();
+  if (!key) return { sectors: [], worlds: [] };
+  if (searchCache[key]) return searchCache[key];
+  const resp = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+  if (!resp.ok) throw new Error("HTTP " + resp.status);
+  const data = await resp.json();
+  searchCache[key] = data;
+  return data;
 }
 
-function populateHexSelects() {
-  document.querySelectorAll('select[data-kind="hex"]').forEach(populateHexSelect);
+function renderSearchResults(picker, data) {
+  const dd = picker.querySelector(".loc-results");
+  const sectors = data.sectors || [];
+  const worlds = data.worlds || [];
+  if (!sectors.length && !worlds.length) {
+    dd.innerHTML = '<div class="loc-empty">No matches</div>';
+  } else {
+    let html = "";
+    if (sectors.length) {
+      html += '<div class="loc-group">Sectors</div>';
+      html += sectors.map((s) => `<button type="button" class="loc-option" data-kind="sector" data-name="${esc(s.name)}">${esc(s.name)}</button>`).join("");
+    }
+    if (worlds.length) {
+      html += '<div class="loc-group">Systems</div>';
+      html += worlds.map((w) => {
+        const tag = (w.tags && !/OTU/.test(w.tags)) ? ` <span class="loc-tag">${esc(w.tags)}</span>` : "";
+        return `<button type="button" class="loc-option" data-kind="world" data-name="${esc(w.name)}" data-sector="${esc(w.sector)}" data-hex="${esc(w.hex)}">${esc(w.name)}${tag} <span class="loc-muted">${esc(w.hex)} · ${esc(w.sector)}</span></button>`;
+      }).join("");
+    }
+    dd.innerHTML = html;
+  }
+  dd.hidden = false;
 }
+
+function closeResults(picker) {
+  const dd = picker.querySelector(".loc-results");
+  dd.hidden = true;
+  dd.innerHTML = "";
+}
+
+function refreshPicker(picker, path) {
+  const loc = getByPath(state, path) || { sector: "", hex: "" };
+  const input = picker.querySelector(".loc-search");
+  input.value = labelFor(loc);
+  const hexRow = picker.querySelector(".loc-hex-row");
+  hexRow.hidden = !loc.sector;
+  if (!hexRow.hidden) picker.querySelector(".loc-hex").value = loc.hex || "";
+  if (document.activeElement === input) input.select();
+  closeResults(picker);
+}
+
+function selectResult(picker, kind, d) {
+  const path = picker.dataset.locPath;
+  if (kind === "world") {
+    setByPath(state, `${path}.sector`, d.sector);
+    setByPath(state, `${path}.hex`, d.hex);
+    worldNames[`${d.sector}|${d.hex}`] = d.name;
+  } else {
+    setByPath(state, `${path}.sector`, d.name);
+    setByPath(state, `${path}.hex`, "");
+  }
+  refreshPicker(picker, path);
+}
+
+function onSearchInput(input) {
+  const picker = input.closest(".loc-picker");
+  const path = picker.dataset.locPath;
+  const q = input.value.trim();
+  clearTimeout(input._debounce);
+  if (!q) {
+    // field cleared -> reset the selection
+    setByPath(state, `${path}.sector`, "");
+    setByPath(state, `${path}.hex`, "");
+    refreshPicker(picker, path);
+    return;
+  }
+  input._debounce = setTimeout(async () => {
+    const seq = (input._seq = (input._seq || 0) + 1);
+    try {
+      const data = await runSearch(q);
+      if (!document.body.contains(input) || seq !== input._seq) return;
+      if (input.value.trim() !== q) return;
+      renderSearchResults(picker, data);
+    } catch (err) {
+      console.error("search failed:", err);
+    }
+  }, 200);
+}
+
+function setActive(dd, idx) {
+  const opts = Array.from(dd.querySelectorAll(".loc-option"));
+  opts.forEach((o, i) => o.classList.toggle("active", i === idx));
+  if (opts[idx]) opts[idx].scrollIntoView({ block: "nearest" });
+}
+
+// --- picker events ---
+document.addEventListener("focusin", (e) => {
+  const input = e.target.closest ? e.target.closest(".loc-search") : null;
+  if (!input) return;
+  input.select();
+});
+
+document.addEventListener("focusout", (e) => {
+  const input = e.target.closest ? e.target.closest(".loc-search") : null;
+  if (!input) return;
+  const picker = input.closest(".loc-picker");
+  const loc = getByPath(state, picker.dataset.locPath) || { sector: "", hex: "" };
+  if (input.value.trim() !== labelFor(loc)) input.value = labelFor(loc);
+  closeResults(picker);
+});
+
+document.addEventListener("mousedown", (e) => {
+  const opt = e.target.closest ? e.target.closest(".loc-option") : null;
+  if (!opt) return;
+  e.preventDefault(); // keep focus in the search box; selection happens here
+  const picker = opt.closest(".loc-picker");
+  selectResult(picker, opt.dataset.kind, opt.dataset);
+});
+
+document.addEventListener("keydown", (e) => {
+  const input = e.target.closest ? e.target.closest(".loc-search") : null;
+  if (!input) return;
+  const picker = input.closest(".loc-picker");
+  const dd = picker.querySelector(".loc-results");
+  if (e.key === "Escape") { closeResults(picker); return; }
+  if (dd.hidden) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    const opts = Array.from(dd.querySelectorAll(".loc-option"));
+    if (!opts.length) return;
+    e.preventDefault();
+    const cur = opts.findIndex((o) => o.classList.contains("active"));
+    const delta = e.key === "ArrowDown" ? 1 : -1;
+    const next = cur < 0
+      ? (delta === 1 ? 0 : opts.length - 1)
+      : ((cur + delta) % opts.length + opts.length) % opts.length;
+    setActive(dd, next);
+    return;
+  }
+  if (e.key === "Enter") {
+    const opts = Array.from(dd.querySelectorAll(".loc-option"));
+    if (!opts.length) return;
+    e.preventDefault();
+    const active = opts.find((o) => o.classList.contains("active")) || opts[0];
+    selectResult(picker, active.dataset.kind, active.dataset);
+  }
+});
 
 // ---------------------------------------------------------------- events
 document.addEventListener("input", (e) => {
   const el = e.target;
-  if (el.dataset && el.dataset.path) setByPath(state, el.dataset.path, coerce(el));
+  if (el.classList && el.classList.contains("loc-search")) { onSearchInput(el); return; }
+  if (el.dataset && el.dataset.path) {
+    setByPath(state, el.dataset.path, coerce(el));
+    // keep the search label in sync when a custom hex is typed directly
+    if (el.classList && el.classList.contains("loc-hex")) {
+      const picker = el.closest(".loc-picker");
+      const loc = getByPath(state, picker.dataset.locPath) || {};
+      picker.querySelector(".loc-search").value = labelFor(loc);
+    }
+  }
 });
 document.addEventListener("change", (e) => {
   const el = e.target;
-  if (el.dataset && el.dataset.kind === "sector") {
-    // state.sector is already updated by the input handler; reset + refill hexes
-    const hexPath = el.dataset.path.replace(/\.sector$/, ".hex");
-    setByPath(state, hexPath, "");
-    const hexEl = document.querySelector(`select[data-kind="hex"][data-path="${hexPath}"]`);
-    if (hexEl) populateHexSelect(hexEl);
-    return;
-  }
   if (el.type === "checkbox" && el.dataset && el.dataset.path) {
     setByPath(state, el.dataset.path, el.checked);
   }
@@ -623,8 +778,7 @@ $("copy-markdown").addEventListener("click", async () => {
 });
 
 // ---------------------------------------------------------------- init
-async function init() {
-  await loadSectors();
+function init() {
   refreshFleetSelect();
   render();
 }

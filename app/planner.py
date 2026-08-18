@@ -1416,6 +1416,7 @@ def plan(config):
 # ---------------------------------------------------------------- sector & system data
 SECTOR_LIST_URL = "https://travellermap.com/api/universe"
 SECTOR_DATA_URL = "https://travellermap.com/api/sec?sector={}"
+SEARCH_URL = "https://travellermap.com/api/search?q={}"
 
 _UWP_RE = re.compile(r"[A-HX?][0-9A-Z?]{6}-[0-9A-Z?]")
 
@@ -1489,3 +1490,60 @@ def list_systems(sector, cache_dir):
     with open(cache_file, "w") as f:
         json.dump(worlds, f)
     return worlds
+
+
+def search(q):
+    """Search all of Traveller by name (global, cross-sector).
+
+    Uses Traveller Map's search API so a partial system or sector name is
+    matched across every sector, not just the current one. Returns::
+
+        {"sectors": [{"name", "tags"}],
+         "worlds":  [{"name", "sector", "hex", "uwp", "tags"}]}
+
+    ``hex`` is the standard 4-digit sector coordinate (e.g. "1910"), rebuilt
+    from the API's 1-based HexX/HexY columns. OTU results sort ahead of
+    non-OTU (e.g. "Farway Faraway") so the canonical match is easiest to
+    find, but both are returned so the caller can disambiguate.
+    """
+    q = (q or "").strip()
+    if not q:
+        return {"sectors": [], "worlds": []}
+
+    r = _get(SEARCH_URL.format(requests.utils.quote(q)))
+    sectors = []
+    worlds = []
+    seen_sectors = set()
+    seen_worlds = set()
+
+    for item in (r.json().get("Results") or {}).get("Items") or []:
+        if "Sector" in item:
+            s = item["Sector"] or {}
+            name = s.get("Name")
+            if name and name not in seen_sectors:
+                seen_sectors.add(name)
+                sectors.append({"name": name, "tags": s.get("SectorTags", "")})
+        elif "World" in item:
+            w = item["World"] or {}
+            name = w.get("Name")
+            sector_name = w.get("Sector")
+            if not (name and sector_name):
+                continue
+            hex_ = f"{w.get('HexX', 0):02d}{w.get('HexY', 0):02d}"
+            key = (sector_name, name, hex_)
+            if key not in seen_worlds:
+                seen_worlds.add(key)
+                worlds.append({
+                    "name": name,
+                    "sector": sector_name,
+                    "hex": hex_,
+                    "uwp": w.get("Uwp", ""),
+                    "tags": w.get("SectorTags", ""),
+                })
+
+    def otu_rank(tags):
+        return 0 if "OTU" in (tags or "") else 1
+
+    sectors.sort(key=lambda s: (otu_rank(s["tags"]), s["name"].lower()))
+    worlds.sort(key=lambda w: (otu_rank(w["tags"]), w["name"].lower(), w["sector"].lower()))
+    return {"sectors": sectors, "worlds": worlds}

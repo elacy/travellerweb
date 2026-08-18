@@ -62,12 +62,10 @@
     <section id="tab-route" class="tab-panel" hidden>
       <h2>Route</h2>
       <div class="grid route-grid">
-        <label>Sector
-          <select data-path="start.sector" data-kind="sector"></select>
-        </label>
-        <label>System (hex)
-          <select data-path="start.hex" data-kind="hex"></select>
-        </label>
+        <div class="loc-block start-loc-block">
+          <div class="loc-title">Start system</div>
+          <div id="start-loc"></div>
+        </div>
         <label>Start year
           <input type="number" data-path="start_date.year">
         </label>
