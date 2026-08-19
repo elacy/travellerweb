@@ -759,14 +759,88 @@ document.addEventListener("click", (e) => {
 });
 
 // ---------------------------------------------------------------- games
-// Data model: localStorage 'travellerweb.games' maps game name -> game, where
+// Data model: 'travellerweb.games' maps game name -> game, where
 // game = { name, opening_balance, transactions, fleets: [{name, location, ships}] }.
+// The in-memory `games` map is the single source of truth. On boot we probe
+// /api/me; when the backend recognises us (authentik SSO headers) we enter
+// server mode and use the account's games map via GET/PUT /api/games, always
+// mirroring to localStorage as an offline cache. Any failure along the way
+// (no fetch, 401, network error, non-JSON, missing uid) keeps the classic
+// localStorage-only behaviour.
 const GAMES_KEY = "travellerweb.games";
 const LEGACY_FLEETS_KEY = "travellerweb.fleets";
-const loadGames = () => {
+
+let games = (() => {
   try { return JSON.parse(localStorage.getItem(GAMES_KEY)) || {}; } catch (_) { return {}; }
+})();
+let serverMode = false;
+let serverUser = null;
+
+const loadGames = () => games;
+
+// Small status indicator next to the save controls: persistent
+// 'Signed in as <username>' (server mode) vs 'Saving locally' (local mode),
+// plus transient 'Saved to account' / 'Save failed' flashes on server saves.
+let saveStatusEl = null;
+let saveStatusTimer = null;
+function getSaveStatusEl() {
+  if (saveStatusEl) return saveStatusEl;
+  saveStatusEl = document.createElement("span");
+  saveStatusEl.id = "save-status";
+  saveStatusEl.style.cssText = "margin-left:8px;color:#667;font-size:0.85em;";
+  const bar = $("game-name") ? $("game-name").parentElement : null;
+  (bar || document.body).appendChild(saveStatusEl);
+  return saveStatusEl;
+}
+function setSaveStatus(text, transient) {
+  const el = getSaveStatusEl();
+  if (saveStatusTimer) { clearTimeout(saveStatusTimer); saveStatusTimer = null; }
+  el.textContent = text;
+  if (transient) {
+    saveStatusTimer = setTimeout(() => {
+      el.textContent = serverMode
+        ? ("Signed in as " + esc((serverUser && (serverUser.username || serverUser.uid)) || ""))
+        : "Saving locally";
+    }, 2000);
+  }
+}
+
+const persistGames = (g) => {
+  games = g;
+  try { localStorage.setItem(GAMES_KEY, JSON.stringify(g)); } catch (_) { /* offline cache only */ }
+  if (serverMode) {
+    fetch("/api/games", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(g),
+    })
+      .then((r) => setSaveStatus(r.ok ? "Saved to account" : "Save failed", true))
+      .catch(() => setSaveStatus("Save failed", true));
+  }
 };
-const persistGames = (g) => localStorage.setItem(GAMES_KEY, JSON.stringify(g));
+
+// Enter server mode only when /api/me is ok AND carries a truthy uid AND
+// /api/games loads; otherwise stay in local mode with the localStorage map
+// already in `games`. Never throws.
+async function bootstrapGames() {
+  try {
+    if (typeof fetch === "undefined") return;
+    const meRes = await fetch("/api/me");
+    if (!meRes.ok) return;
+    const me = await meRes.json();
+    if (!me || !me.uid) return;
+    const gamesRes = await fetch("/api/games");
+    if (!gamesRes.ok) return;
+    const remote = await gamesRes.json();
+    if (remote && typeof remote === "object" && !Array.isArray(remote)) games = remote;
+    serverMode = true;
+    serverUser = me;
+    setSaveStatus("Signed in as " + esc(me.username || me.uid));
+  } catch (_) {
+    // local mode; `games` already came from localStorage
+  }
+}
+setSaveStatus("Saving locally");
 
 const gameFleetCount = (g) => (Array.isArray(g && g.fleets) ? g.fleets.length : 0);
 
@@ -1636,7 +1710,8 @@ function migrateLegacyData() {
   localStorage.removeItem(LEGACY_FLEETS_KEY);
 }
 
-function init() {
+async function init() {
+  await bootstrapGames();
   migrateLegacyData();
   refreshGameSelect();
   resetTxForm();

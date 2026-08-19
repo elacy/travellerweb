@@ -18,6 +18,7 @@ Env:
   APP_NAME          default travellerweb
   APP_IMAGE         default ghcr.io/elacy/travellerweb (:main resolved live)
   HOST_PORT         default 8090 (host) / 8000 (container)
+  TRAVELLERWEB_PG_PASSWORD  Postgres password (dev default 'travellerweb_dev' if unset)
 """
 import os, sys, json, asyncio, ssl, urllib.request
 
@@ -27,6 +28,12 @@ TAG = os.environ.get("APP_TAG", "main")
 HOST_PORT = int(os.environ.get("HOST_PORT", "8090"))
 WS_URL = os.environ.get("TRUENAS_URL", "wss://nas.lacy.ie:443/websocket")
 KEY = os.environ.get("TRUENAS_API_KEY", "").strip()
+PG_PASSWORD = os.environ.get("TRAVELLERWEB_PG_PASSWORD", "").strip()
+if not PG_PASSWORD:
+    PG_PASSWORD = "travellerweb_dev"
+    print("WARNING: TRAVELLERWEB_PG_PASSWORD not set; using fixed dev default "
+          f"'{PG_PASSWORD}'. Add TRAVELLERWEB_PG_PASSWORD to /opt/data/.env "
+          "for a real password.", file=sys.stderr)
 
 _REPO = IMAGE.replace("ghcr.io/", "", 1)  # elacy/travellerweb
 
@@ -88,11 +95,40 @@ async def deployed_image():
 
 async def update_image(new_digest):
     compose = {
-        "services": {APP: {
-            "image": f"{IMAGE}@{new_digest}",
-            "environment": {"TZ": "America/Los_Angeles"},
-            "ports": [{"published": HOST_PORT, "target": 8000}],
-            "restart": "unless-stopped"}}}
+        "services": {
+            APP: {
+                "image": f"{IMAGE}@{new_digest}",
+                "environment": {
+                    "TZ": "America/Los_Angeles",
+                    "DATABASE_URL": (f"postgresql://traveller:{PG_PASSWORD}"
+                                     "@postgres:5432/travellerweb"),
+                },
+                "ports": [{"published": HOST_PORT, "target": 8000}],
+                "restart": "unless-stopped",
+                "depends_on": {"postgres": {"condition": "service_healthy"}},
+            },
+            "postgres": {
+                "image": "postgres:16-alpine",
+                "restart": "unless-stopped",
+                "environment": {
+                    "POSTGRES_USER": "traveller",
+                    "POSTGRES_PASSWORD": PG_PASSWORD,
+                    "POSTGRES_DB": "travellerweb",
+                },
+                "volumes": [{
+                    "type": "bind",
+                    "source": "/mnt/bulk/hermes/travellerweb/postgres",
+                    "target": "/var/lib/postgresql/data",
+                }],
+                "healthcheck": {
+                    "test": ["CMD-SHELL",
+                             "pg_isready -U traveller -d travellerweb"],
+                    "interval": "10s", "timeout": "5s", "retries": 10,
+                    "start_period": "30s",
+                },
+            },
+        }
+    }
     ws = await _conn()
     try:
         await ws.send(json.dumps({"msg": "method", "method": "app.update",
