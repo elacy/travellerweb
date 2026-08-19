@@ -449,6 +449,16 @@ class World:
 
         freight_lots = self.freight(other_world, ship, starting_planet, date)
 
+        # Nothing affordable to buy and no freight to carry: nothing to optimise.
+        # Without this early exit, a zero/negative starting capital produces a
+        # `total_cost <= capital` constraint that collapses to a Python bool
+        # (False when capital < 0), which PuLP rejects with
+        # "A False object cannot be passed as a constraint".
+        if not deals and not freight_lots:
+            return TradeResult(reachable=True, has_trade=False, starting_capital=capital,
+                               final_capital=capital, actual_final_capital=capital,
+                               deals=["No affordable cargo and no freight available"])
+
         freight_lookup = {}
 
         for i, size in enumerate(freight_lots):
@@ -461,7 +471,11 @@ class World:
             problem_variables.append(x)
 
         problem += total_profit
-        problem += total_cost <= capital
+        if deals:
+            # Constrain spend only when there are goods to buy. With no affordable
+            # goods `total_cost` is the constant 0 and `0 <= capital` collapses to
+            # a bool (False for negative capital) that PuLP rejects.
+            problem += total_cost <= capital
         problem += total_tons <= cargo
         problem.solve(pulp.PULP_CBC_CMD(msg=0))
 

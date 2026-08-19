@@ -130,3 +130,16 @@ def test_passenger_enabled_variant_plans_ok():
     assert res.get("ok") is True, f"passenger path failed: {res.get('error')}"
     assert isinstance(res.get("first_step"), dict)
     assert isinstance(res.get("steps"), list) and res["steps"]
+
+
+def test_plan_with_zero_capital_does_not_crash():
+    """Regression: a ledger-derived starting capital of 0 (the default game's
+    opening_balance is 0) must not blow up the trade LP. PuLP rejects a
+    `total_cost <= capital` constraint that collapses to a Python bool (False
+    once capital goes negative after fuel/running/mortgage)."""
+    cfg_zero = copy.deepcopy(config)
+    cfg_zero["capital"] = 0
+    res = planner.plan(cfg_zero)
+    assert res.get("ok") is True, f"zero-capital plan failed: {res.get('error')}"
+    assert isinstance(res.get("first_step"), dict)
+    assert isinstance(res.get("steps"), list) and res["steps"]
