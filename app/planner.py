@@ -925,7 +925,7 @@ class CompleteCondition:
 STARTING_NET_WORTH = "STARTING_NET_WORTH"
 
 class Route:
-    def __init__(self, starting_capital, starting_net_worth, worlds, avoid, complete_condition, ship, data_loader, start_duration, start_date, route_duration = 0, state=dict(),profit =0, text=[]) -> None:
+    def __init__(self, starting_capital, starting_net_worth, worlds, avoid, complete_condition, ship, data_loader, start_duration, start_date, route_duration = 0, state=dict(),profit =0, text=[], steps=None) -> None:
         self.profit = profit
         self.starting_capital = starting_capital
         self.starting_net_worth = starting_net_worth
@@ -936,6 +936,7 @@ class Route:
         self.worlds = worlds
         self.avoid = avoid
         self.text = text
+        self.steps = steps if steps is not None else []
         self.ship = ship
         self.start_date = start_date
 
@@ -1020,6 +1021,10 @@ class Route:
         text.append(f"Running costs of {running_costs:,.2f}, capital: {capital:,.2f}->{capital-running_costs:,.2f}")
         capital -= running_costs
 
+        income = 0.0
+        mortgage_payment = 0.0
+        cut = 0.0
+
         if self.ship.contract:
             income = self.ship.contract.monthly_income()
 
@@ -1039,6 +1044,7 @@ class Route:
             text.append(f"{description}, capital {capital:,.2f}->{passenger_revenue + capital:,.2f}")
             capital += passenger_revenue
 
+        trading_capital = capital
         result = current_world.best_trades(final_world, trade_goods, self.ship, capital, starting_world, cargo_distance, self.start_date)
 
         if not result.reachable:
@@ -1078,7 +1084,25 @@ class Route:
 
         text = self.text + [f"{bcolors.BOLD}{leg_label}{bcolors.ENDC} ({total_distance} hexes, {duration} weeks) {final_world.sector_hex} net worth {self.net_worth():,.2f} -> {new_net_worth:,.2f}"] + text
 
-        yield Route(self.starting_capital, self.starting_net_worth, self.worlds.copy() + legs, self.avoid, self.complete_condition, self.ship, self.data_loader, self.start_duration, arrival_date, total_duration, state, final_capital - self.starting_capital, text)
+        def _world_ref(world):
+            name = world.name if hasattr(world, "name") else str(world.sector_hex)
+            return {"name": name, "sector": world.sector_hex.sector, "hex": world.sector_hex.hex}
+
+        step = {
+            "from": _world_ref(current_world),
+            "to": _world_ref(final_world),
+            "jumps": total_jumps,
+            "duration_days": total_jumps * 7,
+            "fuel_cost": float(fuel_cost),
+            "running_cost": float(running_costs),
+            "monthly_income": float(income),
+            "mortgage_payment": float(mortgage_payment),
+            "passenger_revenue": float(passenger_revenue),
+            "trade_profit": float(result.final_capital - trading_capital),
+            "cut": float(cut),
+        }
+
+        yield Route(self.starting_capital, self.starting_net_worth, self.worlds.copy() + legs, self.avoid, self.complete_condition, self.ship, self.data_loader, self.start_duration, arrival_date, total_duration, state, final_capital - self.starting_capital, text, self.steps + [step])
 
     def projected_duration(self):
         if self.complete or not self.complete_condition.destination:
@@ -1354,6 +1378,7 @@ def plan(config):
     duration = 0
 
     stop_results = []
+    best_routes = []
 
     for stop in stops:
         best_route = find_best_route(capital + raw_profit, net_worth, fleet, data_loader,
@@ -1362,6 +1387,7 @@ def plan(config):
         if best_route is None:
             return {"ok": False, "error": f"Unable to find a viable route to {stop.name}."}
         state = best_route.state
+        best_routes.append(best_route)
         stop_results.append({
             "destination": stop.name,
             "hex": str(stop.sector_hex),
@@ -1382,6 +1408,7 @@ def plan(config):
                                      duration, avoid, state)
         if best_route is None:
             return {"ok": False, "error": "Unable to find a viable route for the profit/duration condition."}
+        best_routes.append(best_route)
         duration = best_route.route_duration
         profit = best_route.real_profit()
         start_date = start_date.add_days(best_route.route_duration * 7)
@@ -1404,11 +1431,17 @@ def plan(config):
         "percentage_increase": round(percentage_increase, 4),
     }
 
+    steps = []
+    for route in best_routes:
+        steps.extend(route.steps)
+
     return {
         "ok": True,
         "stops": stop_results,
         "summary": summary,
         "markdown": route_markdown(stop_results, summary),
+        "first_step": steps[0] if steps else None,
+        "steps": steps,
     }
 
 

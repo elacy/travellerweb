@@ -49,14 +49,14 @@
           <div class="loc-title">Start system</div>
           <div id="start-loc"></div>
         </div>
-        <label>Start year
-          <input type="number" data-path="start_date.year">
+        <label>Current year
+          <input type="number" data-path="game.current_date.year">
         </label>
-        <label>Start day
-          <input type="number" data-path="start_date.day">
+        <label>Current day
+          <input type="number" data-path="game.current_date.day">
         </label>
         <label>Starting capital (Cr)
-          <input type="number" data-path="capital">
+          <input type="number" id="route-capital" readonly>
         </label>
         <label>Uncut profits (Cr)
           <input type="number" data-path="uncut_profits" value="0">

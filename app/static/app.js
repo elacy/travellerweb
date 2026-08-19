@@ -68,6 +68,7 @@ function emptyConfig() {
     game: {
       name: "",
       opening_balance: 0,
+      current_date: { year: 1105, day: 1 },
       transactions: [],
       boughtItems: [],
       characters: [],
@@ -88,6 +89,7 @@ const DEFAULT_CONFIG = {
   game: {
     name: "Pirates of Drinax",
     opening_balance: 0,
+    current_date: { year: 1105, day: 1 },
     transactions: [],
     boughtItems: [],
     characters: [],
@@ -193,6 +195,7 @@ function normalizeGame(g) {
   return {
     name: (g && typeof g.name === "string" && g.name.trim()) ? g.name : "",
     opening_balance: Number.isFinite(Number(g && g.opening_balance)) ? Number(g.opening_balance) : 0,
+    current_date: normalizeDay((g && g.current_date && typeof g.current_date === "object") ? g.current_date : {}),
     transactions: normalizeTxns(g && g.transactions),
     boughtItems: normalizeBought(g && g.boughtItems),
     characters: normalizeChars(g && g.characters),
@@ -324,6 +327,7 @@ function normalize(cfg) {
     out.game = {
       name: f.name || "Pirates of Drinax",
       opening_balance: Number.isFinite(Number(f.opening_balance)) ? Number(f.opening_balance) : 0,
+      current_date: normalizeDay(cfg.start_date || {}),
       transactions: normalizeTxns(f.transactions),
       fleets: [{
         name: f.name || "",
@@ -1110,6 +1114,10 @@ function renderTxns() {
     <div class="tx-chip expense">Spent <strong>−${fmtCr(totals.expense)}</strong></div>
     <div class="tx-chip balance">Balance <strong>${signedCr(totals.balance)}</strong></div>`;
 
+  // Route tab: the read-only capital field mirrors the ledger balance.
+  const capEl = $("route-capital");
+  if (capEl) capEl.value = totals.balance;
+
   $("tx-list").innerHTML = txs.length
     ? `<table class="tx-table">
         <thead><tr><th>Day</th><th>Type</th><th>Category</th><th>Note</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr></thead>
@@ -1581,7 +1589,12 @@ async function planRoute() {
     const resp = await fetch("/api/plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ config: state }),
+      body: JSON.stringify({ config: Object.assign({}, state, {
+        // the route form's date/capital inputs now edit the game's own state;
+        // the backend still expects the legacy top-level start_date / capital
+        start_date: (state.game && state.game.current_date) || { year: 1105, day: 1 },
+        capital: txTotals().balance,
+      }) }),
     });
     let data;
     try { data = await resp.json(); } catch (_) { data = { detail: await resp.text() }; }
@@ -1609,6 +1622,7 @@ async function planRoute() {
 }
 
 let lastMarkdown = "";
+let lastFirstStep = null; // first_step payload from the most recent plan response
 
 function inlineMd(s) {
   return esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
@@ -1644,9 +1658,86 @@ function renderMarkdown(md) {
 
 function renderResults(data) {
   lastMarkdown = data.markdown || "";
-  $("route-output").innerHTML = renderMarkdown(lastMarkdown);
+  lastFirstStep = (data.first_step && typeof data.first_step === "object") ? data.first_step : null;
+  let html = renderMarkdown(lastMarkdown);
+  if (lastFirstStep && lastFirstStep.to && lastFirstStep.to.name) {
+    html += `<button id="route-take-first-step" class="primary">Take first step → ${esc(lastFirstStep.to.name)}</button>`;
+  }
+  $("route-output").innerHTML = html;
   $("results").scrollIntoView({ behavior: "smooth", block: "start" });
 }
+
+// Advance an in-game date by `days` (365-day years, no leap years — matches
+// the backend's Date.add_days: day rolls over 365 → year++).
+function addDays(date, days) {
+  const d = (date && typeof date === "object") ? date : { year: 1105, day: 1 };
+  let day = parseInt(d.day, 10) || 1;
+  let year = parseInt(d.year, 10) || 1105;
+  let n = parseInt(days, 10) || 0;
+  day += n;
+  while (day > 365) { day -= 365; year++; }
+  while (day < 1) { day += 365; year--; }
+  return { year, day };
+}
+
+// Post the first step's ledger line items, advance the game date, move the
+// fleet, persist via the normal save path and re-render the affected views.
+function takeFirstStep() {
+  const fs = lastFirstStep;
+  if (!fs) return;
+  if (!state.fleet) return alert("Select a fleet first");
+  const from = (fs.from && fs.from.name) || "";
+  const to = (fs.to && fs.to.name) || "";
+
+  // day/year of the posted transactions = the STARTING (pre-advance) date
+  const start = (state.game && state.game.current_date && typeof state.game.current_date === "object")
+    ? state.game.current_date : { year: 1105, day: 1 };
+  const adv = addDays(start, fs.duration_days);
+
+  const round2 = (v) => Math.round(Number(v) * 100) / 100;
+  // One transaction per non-zero line item; amount is always positive.
+  // trade_profit's type depends on its sign; everything else is fixed.
+  const lineItems = [
+    { key: "fuel_cost", type: "expense", category: "Fuel", note: `Fuel: ${from} → ${to}` },
+    { key: "running_cost", type: "expense", category: "Running Costs", note: `Running costs: ${from} → ${to}` },
+    { key: "monthly_income", type: "income", category: "Income", note: "Monthly income", min: 0 },
+    { key: "mortgage_payment", type: "expense", category: "Mortgage", note: "Mortgage payment", min: 0 },
+    { key: "passenger_revenue", type: "income", category: "Passengers", note: `Passengers: ${from} → ${to}`, min: 0 },
+    { key: "trade_profit", type: null, category: "Trade", note: `Trade: ${from} → ${to}`, signed: true },
+    { key: "cut", type: "expense", category: "Contract Cut", note: "Contract cut", min: 0 },
+  ];
+
+  ensureLedger();
+  lineItems.forEach((li) => {
+    const v = fs[li.key];
+    if (v == null || !isFinite(Number(v))) return;
+    const rounded = round2(v);
+    if (rounded === 0) return; // skip zero line items
+    if (li.min != null && v <= li.min) return; // only positive for min:0 items
+    const type = li.signed ? (v > 0 ? "income" : "expense") : li.type;
+    state.game.transactions.push({
+      id: txId(),
+      day: start.day,
+      year: start.year,
+      type,
+      amount: Math.abs(rounded),
+      category: li.category,
+      note: li.note,
+    });
+  });
+
+  lastDay = adv.day; lastYear = adv.year;
+  state.game.current_date = adv;
+  state.fleet.location = to;
+  if (fs.to) state.start = { sector: fs.to.sector || "", hex: fs.to.hex || "" };
+  if (!persistCurrentGame()) alert("Save the game first — give it a name on the Games bar");
+  render();
+}
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest && e.target.closest("#route-take-first-step");
+  if (btn) takeFirstStep();
+});
 
 $("plan-btn").addEventListener("click", planRoute);
 
@@ -1688,7 +1779,7 @@ function migrateLegacyData() {
   const names = Object.keys(legacy).filter((n) => legacy[n] && typeof legacy[n] === "object");
   if (!names.length) return;
 
-  const game = { name: "Pirates of Drinax", opening_balance: 0, transactions: [], fleets: [] };
+  const game = { name: "Pirates of Drinax", opening_balance: 0, current_date: { year: 1105, day: 1 }, transactions: [], fleets: [] };
   names.forEach((n) => {
     const f = legacy[n];
     game.fleets.push({
