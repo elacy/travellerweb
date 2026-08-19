@@ -21,6 +21,7 @@ jobs:
   # torn down by the webServer block in tests/e2e/playwright.config.js.
   ui-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,7 +37,7 @@ jobs:
 
       - name: Install Chromium
         working-directory: tests/e2e
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Run UI tests
         working-directory: tests/e2e
