@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd /opt/data/tmp/travellerweb-work/travellerweb
+export HOME=/opt/data/home
+export PATH=/opt/data/home/.local/bin:$PATH
 set -a; . /opt/data/.env; set +a
 
 RUN=$(gh run list --repo elacy/travellerweb --json databaseId,headSha --jq '.[0] | .databaseId')
@@ -24,4 +26,4 @@ done
 
 if [ "${CONC:-}" != "success" ]; then echo "timed out waiting for build"; exit 1; fi
 echo "build-app succeeded; deploying..."
-python3 scripts/deploy_travellerweb.py
+"${TW_DEPLOY_PYTHON:-/opt/hermes/.venv/bin/python}" scripts/deploy_travellerweb.py
