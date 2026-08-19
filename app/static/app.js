@@ -1120,7 +1120,7 @@ let selectedItemId = null;
 function loadCatalogue() {
   if (catalogueLoaded) return Promise.resolve(catalogue);
   catalogueLoaded = true;
-  return fetch("items.json")
+  return fetch("/static/items.json")
     .then((r) => {
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();

@@ -16,8 +16,35 @@ env:
   RUNNER_IMAGE: ${{ github.repository }}-runner
 
 jobs:
+  # UI regression suite (Playwright + Chromium). Runs before the Docker image
+  # build so a red UI test stops the build. The static server is started and
+  # torn down by the webServer block in tests/e2e/playwright.config.js.
+  ui-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: tests/e2e
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: tests/e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Run UI tests
+        working-directory: tests/e2e
+        run: npx playwright test
+
   build-app:
     runs-on: ubuntu-latest
+    needs: [ui-test]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
