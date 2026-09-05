@@ -6,7 +6,6 @@ import time
 import traceback
 from contextlib import asynccontextmanager
 from typing import Any, Dict
-from urllib.parse import unquote
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, FileResponse
@@ -158,6 +157,14 @@ def identity_from_headers(request: Request) -> Dict[str, str] | None:
     Headers are matched case-insensitively (Starlette lowercases them). A
     missing/empty X-Authentik-Uid means the request is anonymous -> None.
     """
+    # The identity headers are injected by the Traefik forward-auth proxy and
+    # must not be reachable around it. When AUTH_PROXY_SECRET is set (and
+    # Traefik adds it as a custom request header), a client hitting the app
+    # directly cannot forge an identity.
+    secret = os.environ.get("AUTH_PROXY_SECRET", "").strip()
+    if secret and request.headers.get("x-proxy-secret", "") != secret:
+        return None
+
     uid = (request.headers.get("x-authentik-uid") or "").strip()
     if not uid:
         return None
@@ -211,7 +218,9 @@ def api_put_games(request: Request, body: Dict[str, Any]):
 def api_delete_game(request: Request, name: str):
     ident = require_identity(request)
     try:
-        db_delete_game(ident["uid"], unquote(name))
+        # Starlette already percent-decodes path params; unquoting again would
+        # mangle names containing literal %-sequences (e.g. "A%20B" -> "A B").
+        db_delete_game(ident["uid"], name)
     except Exception as exc:  # noqa: BLE001
         logger.warning("db_delete_game failed: %s", exc)
         raise HTTPException(status_code=503, detail="database unavailable")

@@ -71,15 +71,30 @@ Everything the CLI hardcoded is a field on the form (or the raw JSON tab). The c
   "capital": 15800985,
   "uncut_profits": 0,
   "max_profit": null,
-  "max_duration": null
+  "max_duration": null,
+  "search_budget_seconds": 60
 }
 ```
 
-See `default_config.json` for the exact fleet from the original `trade.py` (Pirates of Drinax campaign).
+`search_budget_seconds` caps each best-route search (default 60s): a condition
+that can never complete — an unreachable `max_profit`, or a stop outside jump
+range — returns an error when the budget expires instead of hanging the request.
+
+The exact preset fleet from the original `trade.py` (Pirates of Drinax campaign)
+lives in `DEFAULT_CONFIG` in `app/static/app.js` — the "Load default fleet"
+button uses it.
 
 Legacy configs (top-level `ships`/`fuel_dumps`, ship-level `drinax` contracts) are still accepted:
 ships and fuel dumps are read from the top level and any ship-level Drinax contract is lifted to the
 fleet contract (10% default) rather than silently dropped.
+
+## Security
+
+Identity comes from `X-Authentik-*` headers injected by the Traefik forward-auth proxy, so the app
+port must not be reachable around the proxy (clients could forge a uid). As defense in depth, set
+`AUTH_PROXY_SECRET` (passed through by `scripts/deploy_travellerweb.py` when present in its
+environment): the proxy must then also send the same value in `X-Proxy-Secret` on every request, and
+direct-to-app requests are treated as anonymous.
 
 ## License
 

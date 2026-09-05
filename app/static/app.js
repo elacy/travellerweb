@@ -803,7 +803,7 @@ function setSaveStatus(text, transient) {
   if (transient) {
     saveStatusTimer = setTimeout(() => {
       el.textContent = serverMode
-        ? ("Signed in as " + esc((serverUser && (serverUser.username || serverUser.uid)) || ""))
+        ? ("Signed in as " + ((serverUser && (serverUser.username || serverUser.uid)) || ""))
         : "Saving locally";
     }, 2000);
   }
@@ -836,10 +836,18 @@ async function bootstrapGames() {
     const gamesRes = await fetch("/api/games");
     if (!gamesRes.ok) return;
     const remote = await gamesRes.json();
-    if (remote && typeof remote === "object" && !Array.isArray(remote)) games = remote;
-    serverMode = true;
+    serverMode = true;   // before any persistGames() so it also PUTs
     serverUser = me;
-    setSaveStatus("Signed in as " + esc(me.username || me.uid));
+    if (remote && typeof remote === "object" && !Array.isArray(remote)) {
+      // Merge, don't replace: games created while in local mode (offline,
+      // or before the first login) must survive the switch to the account
+      // map — the next save would otherwise overwrite localStorage with
+      // the server map and silently destroy them. Server wins on conflicts.
+      const localOnly = Object.keys(games).some((n) => !(n in remote));
+      games = Object.assign({}, games, remote);
+      if (localOnly) persistGames(games); // rescue local-only games to the account
+    }
+    setSaveStatus("Signed in as " + (me.username || me.uid));
   } catch (_) {
     // local mode; `games` already came from localStorage
   }
@@ -903,8 +911,11 @@ $("save-game").addEventListener("click", () => {
   const name = $("game-name").value.trim();
   if (!name) return alert("Enter a game name first");
   if (!state.game.fleets.length) return alert("Nothing to save — add a fleet first");
+  const prevName = state.game.name;
   state.game.name = name;
   const games = loadGames();
+  // saving under a new name is a rename: drop the old entry or it lingers forever
+  if (prevName && prevName !== name) delete games[prevName];
   games[name] = deepCopy(state.game);
   persistGames(games);
   refreshGameSelect();
@@ -1282,10 +1293,14 @@ $("buy-btn").addEventListener("click", () => {
   if (!item) return alert("Select an item first");
   const qty = Math.max(1, parseInt($("buy-qty").value, 10) || 1);
   ensureLedger();
+  // date the purchase with the game's current in-game date (not whatever was
+  // last typed into the transaction form, which defaults to day 1, 1105)
+  const buyDate = normalizeDay(state.game.current_date || {});
+  lastDay = buyDate.day; lastYear = buyDate.year;
   const t = {
     id: txId(),
-    day: lastDay,
-    year: lastYear,
+    day: buyDate.day,
+    year: buyDate.year,
     type: "expense",
     amount: item.cost * qty,
     category: item.category || "",
@@ -1732,6 +1747,12 @@ function takeFirstStep() {
   if (fs.to) state.start = { sector: fs.to.sector || "", hex: fs.to.hex || "" };
   if (!persistCurrentGame()) alert("Save the game first — give it a name on the Games bar");
   render();
+
+  // The step is consumed: drop the button and its payload so a second click
+  // cannot post the same ledger lines (and re-advance the date) twice.
+  lastFirstStep = null;
+  const stepBtn = document.getElementById("route-take-first-step");
+  if (stepBtn) stepBtn.remove();
 }
 
 document.addEventListener("click", (e) => {

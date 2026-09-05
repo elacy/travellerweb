@@ -37,6 +37,11 @@ if not PG_PASSWORD:
 
 _REPO = IMAGE.replace("ghcr.io/", "", 1)  # elacy/travellerweb
 
+# Opt-in shared secret the reverse proxy must present (see identity_from_headers
+# in app/main.py): blocks forged auth headers from clients that reach the
+# published host port directly instead of through Traefik.
+AUTH_PROXY_SECRET = os.environ.get("AUTH_PROXY_SECRET", "").strip()
+
 ctx = ssl.create_default_context()
 ctx.check_hostname = False          # NAS uses a self-signed cert
 ctx.verify_mode = ssl.CERT_NONE
@@ -102,6 +107,9 @@ async def update_image(new_digest):
                     "TZ": "America/Los_Angeles",
                     "DATABASE_URL": (f"postgresql://traveller:{PG_PASSWORD}"
                                      "@postgres:5432/travellerweb"),
+                    # only forwarded when configured; Traefik must add the same
+                    # value as a custom request header on every proxied request
+                    **({"AUTH_PROXY_SECRET": AUTH_PROXY_SECRET} if AUTH_PROXY_SECRET else {}),
                 },
                 "ports": [{"published": HOST_PORT, "target": 8000}],
                 "restart": "unless-stopped",

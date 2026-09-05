@@ -185,6 +185,44 @@ def test_games_delete_url_decodes_name(client, monkeypatch):
     assert r.json() == {}
 
 
+def test_games_delete_name_containing_percent(client, monkeypatch):
+    """Regression: the endpoint used to unquote the already-decoded path
+    param, so a literal 'A%20B' turned into 'A B' and the delete silently
+    removed nothing (while still returning ok).
+
+    Called directly with a constructed Request because TestClient/httpx
+    pre-decodes %25 in the URL itself, muddying what reaches the handler."""
+    seen = {}
+
+    def fake_delete(uid, name):
+        seen["name"] = name
+
+    monkeypatch.setattr(app_main, "db_delete_game", fake_delete)
+
+    from starlette.requests import Request
+    scope = {"type": "http", "method": "DELETE", "path": "/api/games/x",
+             "query_string": b"", "headers": [(b"x-authentik-uid", b"u-42")]}
+    res = app_main.api_delete_game(request=Request(scope), name="A%20B")
+    assert res == {"ok": True}
+    assert seen["name"] == "A%20B"
+
+
+def test_me_requires_proxy_secret_when_configured(client, monkeypatch):
+    """AUTH_PROXY_SECRET is opt-in hardening: when set, authentik headers are
+    only honoured if the proxy also presented the shared secret."""
+    monkeypatch.setenv("AUTH_PROXY_SECRET", "s3cret")
+
+    r = client.get("/api/me", headers=AUTH_HEADERS)
+    assert r.status_code == 401
+
+    r = client.get("/api/me", headers={**AUTH_HEADERS, "X-Proxy-Secret": "s3cret"})
+    assert r.status_code == 200
+    assert r.json()["uid"] == "user-42"
+
+    r = client.get("/api/me", headers={**AUTH_HEADERS, "X-Proxy-Secret": "wrong"})
+    assert r.status_code == 401
+
+
 def test_games_db_unavailable_503(client, monkeypatch):
     def boom(*args, **kwargs):
         raise RuntimeError("db unreachable")

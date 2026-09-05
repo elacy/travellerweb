@@ -479,6 +479,13 @@ class World:
         problem += total_tons <= cargo
         problem.solve(pulp.PULP_CBC_CMD(msg=0))
 
+        if problem.status != pulp.LpStatusOptimal:
+            # Non-optimal solves leave variable values at None, which would
+            # crash the value reads below — report no trade instead.
+            return TradeResult(reachable=True, has_trade=False, starting_capital=capital,
+                               final_capital=capital, actual_final_capital=capital,
+                               deals=["No trade: cargo optimisation failed"])
+
         
         starting_capital = capital
         final_capital = capital
@@ -538,13 +545,15 @@ class Mortgage:
         else:
             self.__monthly_payment = monthly_payment
 
-    def mortgage_payment(self, state):
+    def mortgage_payment(self, state, fraction=1.0):
+        # `fraction` is the share of a month this step covers (7/30 for a
+        # one-week hop). The outstanding balance must shrink by the cash
+        # actually paid — a full month per hop retires the mortgage ~4x too
+        # fast.
         paid = state.get(MORTGAGE_PAID, 0)
-        payment = self.__monthly_payment
+        payment = min(self.__monthly_payment * fraction, self.__mortgage - paid)
+        payment = max(payment, 0)
 
-        if self.__mortgage - paid < payment:
-            payment = self.__mortgage - paid
-        
         state[MORTGAGE_PAID] = paid + payment
         return payment
     
@@ -695,6 +704,11 @@ class Ship:
         return self.__cargo + self.__cargo_fuel - fuel_required
     
     def max_jump(self):
+        # Zero fuel per jump (a freshly added ship keeps the 0 default) means
+        # fuel never limits range — fall back to the configured max jump
+        # instead of dividing by zero.
+        if self.__fuel_per_jump <= 0:
+            return self.__max_jump
         return math.floor((self.__cargo_fuel + self.__fuel_tank) / self.__fuel_per_jump)
 
     def jumps_required(self, distance):
@@ -756,6 +770,18 @@ def _get(url, attempts=3, timeout=30):
     raise last
 
 
+def _write_json_atomic(path, data):
+    """Write cache JSON via temp file + rename.
+
+    Two concurrent requests fetching the same uncached sector otherwise
+    interleave their writes and leave truncated JSON in the cache forever
+    (jump-worlds entries have no TTL), breaking every later plan."""
+    tmp = f"{path}.tmp.{os.getpid()}"
+    with open(tmp, "w") as f:
+        json.dump(data, f)
+    os.replace(tmp, path)
+
+
 class DataLoader:
     def __init__(self, max_jump, data_dir="data", cache_dir="cache") -> None:
         self.__world_cache = dict()
@@ -802,14 +828,16 @@ class DataLoader:
         file_name = os.path.join(self.cache_dir, f"{sector}-{hex}-{max_jump}.json")
 
         if os.path.isfile(file_name):
-            with open(file_name, 'r') as file:
-                return json.load(file)
+            try:
+                with open(file_name, 'r') as file:
+                    return json.load(file)
+            except (ValueError, OSError):
+                pass  # corrupt cache entry: fall through and refetch
 
         url = f'https://travellermap.com/api/jumpworlds?sector={requests.utils.quote(sector)}&hex={hex}&jump={max_jump}'
         jump_data = _get(url).json()
 
-        with open(file_name, 'w') as f:
-            json.dump(jump_data, f)
+        _write_json_atomic(file_name, jump_data)
 
         return jump_data
 
@@ -912,7 +940,10 @@ class DataLoader:
             with open(os.path.join(self.data_dir, 'passageFreight.json'), 'r') as file:
                 self.__passage_freight = json.load(file)
 
-        return self.__passage_freight[str(distance)][type]
+        # The table covers 1–6 parsecs (the legal single-jump range); clamp
+        # over-range distances instead of KeyError-ing on big configured jumps.
+        key = str(max(1, min(distance, 6)))
+        return self.__passage_freight[key][type]
     
 class CompleteCondition:
     def __init__(self, destination=None, max_profit=None, max_duration=None) -> None:
@@ -944,19 +975,25 @@ class Route:
         self.starting_capital = starting_capital
         self.starting_net_worth = starting_net_worth
         self.complete_condition = complete_condition
-        self.complete = complete_condition.is_complete(worlds[-1], route_duration, profit)
         self.state = state
-        self.start_duration = start_duration
         self.worlds = worlds
         self.avoid = avoid
         self.text = text
         self.steps = steps if steps is not None else []
         self.ship = ship
         self.start_date = start_date
+        self.start_duration = start_duration
 
         self.data_loader = data_loader
+        # route_duration is THIS segment's weeks only; total_duration is the
+        # whole journey (segment + weeks already spent before this search
+        # started). Completion conditions (max_duration) must judge the whole
+        # journey, and each generation must add only its own hops — feeding a
+        # parent's total back in as route_duration re-counts start_duration
+        # once per hop and inflates every downstream duration.
         self.route_duration = route_duration
         self.total_duration = route_duration + start_duration
+        self.complete = complete_condition.is_complete(worlds[-1], self.total_duration, profit)
 
     def generate_next_steps(self):
         if self.complete:
@@ -1026,7 +1063,7 @@ class Route:
         text.append(f"Buy unrefined fuel for {fuel_cost}, capital {capital:,.2f}->{capital - fuel_cost:,.2f}")
         capital -= fuel_cost
         duration = total_jumps
-        total_duration = self.total_duration + duration
+        segment_duration = self.route_duration + duration
         state = self.state.copy()
 
         running_costs = self.ship.running_cost(self.data_loader, total_jumps * (9/30))
@@ -1040,13 +1077,16 @@ class Route:
         cut = 0.0
 
         if self.ship.contract:
-            income = self.ship.contract.monthly_income()
+            # A step of `total_jumps` weeks covers 7*jumps/30 of a month:
+            # income and mortgage cash flows are pro-rated by the same factor.
+            month_fraction = (7 * total_jumps) / 30
+            income = self.ship.contract.monthly_income() * month_fraction
 
             if income > 0:
                 text.append(f"Monthly Income of {income:,.2f}, capital: {capital:,.2f}->{capital+income:,.2f}")
                 capital += income
 
-            mortgage_payment = self.ship.contract.mortgage_payment(state) * ((7* total_jumps) / 30)
+            mortgage_payment = self.ship.contract.mortgage_payment(state, month_fraction)
             if mortgage_payment > 0:
                 text.append(f"Mortgage paid of {mortgage_payment:,.2f}, capital: {capital:,.2f}->{capital-mortgage_payment:,.2f}")
                 capital -= mortgage_payment
@@ -1070,15 +1110,18 @@ class Route:
         final_capital = result.final_capital
 
         if self.ship.contract:
-            cut, description = self.ship.contract.profit_cut(state, final_world, result.starting_capital, final_capital)
+            # profit_cut mutates `state` (e.g. Perfect Stranger bank tracking),
+            # so it must run exactly once per step. On the starting world the
+            # sale prices are real dice, so base the cut on the actual capital
+            # to keep the ledger row and the cash actually taken in agreement.
+            cut_basis = result.actual_final_capital if starting_world else result.final_capital
+            cut, description = self.ship.contract.profit_cut(state, final_world, result.starting_capital, cut_basis)
 
             if cut is not None:
-                text.append(description)
+                if description:
+                    text.append(description)
                 final_capital -= cut
-
-            if starting_world:
-                cut, _, = self.ship.contract.profit_cut(state, final_world, result.starting_capital, result.actual_final_capital)
-            table += f"| {arrival_date} | Cut | -{round(cut, 2)} |  |\n"
+                table += f"| {arrival_date} | Cut | -{round(cut, 2)} |  |\n"
         
         if final_capital < 0:
             return
@@ -1116,7 +1159,7 @@ class Route:
             "cut": float(cut),
         }
 
-        yield Route(self.starting_capital, self.starting_net_worth, self.worlds.copy() + legs, self.avoid, self.complete_condition, self.ship, self.data_loader, self.start_duration, arrival_date, total_duration, state, final_capital - self.starting_capital, text, self.steps + [step])
+        yield Route(self.starting_capital, self.starting_net_worth, self.worlds.copy() + legs, self.avoid, self.complete_condition, self.ship, self.data_loader, self.start_duration, arrival_date, segment_duration, state, final_capital - self.starting_capital, text, self.steps + [step])
 
     def projected_duration(self):
         if self.complete or not self.complete_condition.destination:
@@ -1144,7 +1187,11 @@ class Route:
         return self.net_worth() - self.starting_net_worth
     
     def profit_per_week(self):
-        return self.real_profit() / self.route_duration
+        # Rate over the whole journey so far (real_profit is journey-cumulative);
+        # guard the not-yet-moving initial route.
+        if not self.total_duration:
+            return 0.0
+        return self.real_profit() / self.total_duration
 
     def __lt__(self, other):
         if other is None:
@@ -1159,13 +1206,21 @@ class Route:
     def __eq__(self, other):
         return False
         
-def find_best_route(capital, net_worth, ship, data_loader, start, start_date, destination, start_duration,avoid, state):
+def find_best_route(capital, net_worth, ship, data_loader, start, start_date, destination, start_duration,
+                    avoid, state, budget_seconds=60.0, max_routes=100_000):
     routes = [Route(capital, net_worth, [start], avoid, destination, ship, data_loader, start_duration, start_date, state=state)]
     heapq.heapify(routes)
     best_route = None
     completed_routes = 0
+    deadline = time.monotonic() + budget_seconds
 
     while routes and completed_routes < 1:
+        # A profit/duration-only condition may never complete (e.g. an
+        # unreachable max_profit, or a stop outside jump range); without a
+        # budget the search spins forever, pinning the request thread and
+        # growing the heap without bound.
+        if time.monotonic() > deadline or len(routes) > max_routes:
+            break
         route = heapq.heappop(routes)
 
         for new_route in route.generate_next_steps():
@@ -1370,6 +1425,13 @@ def plan(config):
     capital = float(config.get("capital", 0))
     uncut_profits = float(config.get("uncut_profits", 0))
 
+    # wall-clock cap for one best-route search (see find_best_route); the
+    # default trades responsiveness for coverage on huge search spaces
+    try:
+        search_budget = float(config.get("search_budget_seconds", 60))
+    except (TypeError, ValueError):
+        search_budget = 60.0
+
     max_profit = config.get("max_profit")
     if max_profit in ("", None):
         max_profit = None
@@ -1390,6 +1452,10 @@ def plan(config):
     raw_profit = 0.0
     profit = 0.0
     duration = 0
+    # real_profit() is measured against the ORIGINAL net worth, so it is
+    # journey-cumulative; accumulate only the per-stop delta or earlier stops
+    # get counted twice in the summary.
+    prev_real_profit = 0.0
 
     stop_results = []
     best_routes = []
@@ -1397,21 +1463,23 @@ def plan(config):
     for stop in stops:
         best_route = find_best_route(capital + raw_profit, net_worth, fleet, data_loader,
                                      start, start_date, CompleteCondition(stop),
-                                     duration, avoid, state)
+                                     duration, avoid, state, budget_seconds=search_budget)
         if best_route is None:
             return {"ok": False, "error": f"Unable to find a viable route to {stop.name}."}
         state = best_route.state
         best_routes.append(best_route)
+        stop_real_profit = best_route.real_profit() - prev_real_profit
+        prev_real_profit = best_route.real_profit()
         stop_results.append({
             "destination": stop.name,
             "hex": str(stop.sector_hex),
             "text": [strip_ansi(line) for line in best_route.text],
             "duration": best_route.route_duration,
-            "real_profit": round(best_route.real_profit(), 2),
+            "real_profit": round(stop_real_profit, 2),
             "profit": round(best_route.profit, 2),
         })
         duration += best_route.route_duration
-        profit += best_route.real_profit()
+        profit += stop_real_profit
         raw_profit += best_route.profit
         start_date = start_date.add_days(best_route.route_duration * 7)
         start = stop
@@ -1419,11 +1487,11 @@ def plan(config):
     if max_profit is not None or max_duration is not None:
         best_route = find_best_route(capital, net_worth, fleet, data_loader, start, start_date,
                                      CompleteCondition(max_profit=max_profit, max_duration=max_duration),
-                                     duration, avoid, state)
+                                     duration, avoid, state, budget_seconds=search_budget)
         if best_route is None:
             return {"ok": False, "error": "Unable to find a viable route for the profit/duration condition."}
         best_routes.append(best_route)
-        duration = best_route.route_duration
+        duration += best_route.route_duration
         profit = best_route.real_profit()
         start_date = start_date.add_days(best_route.route_duration * 7)
         stop_results.append({
@@ -1513,8 +1581,7 @@ def list_sectors(cache_dir, ttl=86400):
     out.sort(key=lambda x: x["name"].lower())
 
     Path(cache_dir).mkdir(parents=True, exist_ok=True)
-    with open(cache_file, "w") as f:
-        json.dump(out, f)
+    _write_json_atomic(cache_file, out)
     return out
 
 
@@ -1534,8 +1601,7 @@ def list_systems(sector, cache_dir):
     worlds.sort(key=lambda w: (not w["name"].lower(), w["name"].lower(), w["hex"]))
 
     Path(cache_dir).mkdir(parents=True, exist_ok=True)
-    with open(cache_file, "w") as f:
-        json.dump(worlds, f)
+    _write_json_atomic(cache_file, worlds)
     return worlds
 
 

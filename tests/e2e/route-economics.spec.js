@@ -200,6 +200,13 @@ test('take first step: advances date, moves fleet, posts ledger lines', async ({
 
   // capital = 0 opening + (100000 + 15000 + 549531.25) - (5000 + 2000 + 30000)
   await expect(page.locator('#route-capital')).toHaveValue('627531.25');
+
+  // the step is consumed: the CTA is removed so a second click cannot post
+  // the same ledger lines (and re-advance the date) twice
+  await expect(page.locator('#route-take-first-step')).toHaveCount(0);
+  await expect(
+    page.locator('input[data-path="game.current_date.day"]')
+  ).toHaveValue('8');
 });
 
 test('next plan departs from the new fleet location', async ({ page }) => {

@@ -1,6 +1,8 @@
 import copy
 import os
+import re
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 import planner
@@ -143,3 +145,91 @@ def test_plan_with_zero_capital_does_not_crash():
     assert res.get("ok") is True, f"zero-capital plan failed: {res.get('error')}"
     assert isinstance(res.get("first_step"), dict)
     assert isinstance(res.get("steps"), list) and res["steps"]
+
+
+def test_multi_stop_summary_matches_steps():
+    """Regression: the summary must not double-count earlier stops.
+
+    `profit += real_profit()` used to sum journey-cumulative values (stop 1's
+    profit counted once per later stop), and a child route's route_duration
+    was fed the parent's total_duration, re-adding start_duration every hop —
+    inflating per-stop weeks and the summary total."""
+    res = planner.plan(config)
+    assert res.get("ok") is True, res.get("error")
+
+    steps_weeks = sum(s["duration_days"] for s in res["steps"]) // 7
+    assert res["summary"]["weeks"] == steps_weeks
+    assert sum(s["duration"] for s in res["stops"]) == res["summary"]["weeks"]
+
+    # stops report per-stop profits whose sum is the journey total
+    stops_profit = round(sum(s["real_profit"] for s in res["stops"]), 2)
+    assert stops_profit == res["summary"]["total_profit"]
+
+
+def test_perfect_stranger_ledger_cut_matches_capital():
+    """Regression: profit_cut mutates state, so it must run exactly once per
+    step. It used to run twice on the starting world (once on expected prices
+    — debited from capital — and once on actual prices — shown in the ledger
+    table), so the narrative cut and the ledger row disagreed."""
+    cfg = copy.deepcopy(config)
+    cfg["fleet"]["contract"] = {"type": "none"}
+    cfg["fleet"]["ships"][0]["contract"] = {"type": "perfect_stranger"}
+    cfg["uncut_profits"] = 100000
+    res = planner.plan(cfg)
+    assert res.get("ok") is True, res.get("error")
+
+    md = res["markdown"]
+    narrative = re.findall(r"takes 75% \(([\d,]+(?:\.\d+)?)\)", md)
+    ledger = re.findall(r"\| Cut \| -([\d.]+) \|", md)
+    assert narrative and ledger, "no cut lines found in markdown"
+    assert float(narrative[0].replace(",", "")) == float(ledger[0])
+
+
+def test_unreachable_max_profit_search_is_bounded():
+    """Regression: a profit-only completion condition that can never be met
+    used to spin forever (the heap grows without bound and every popped route
+    runs LP solves). The search budget must cut it off with an error."""
+    cfg = copy.deepcopy(config)
+    cfg["stops"] = []
+    cfg["max_profit"] = 10**12
+    cfg["max_duration"] = None
+    cfg["search_budget_seconds"] = 3
+    t0 = time.monotonic()
+    res = planner.plan(cfg)
+    elapsed = time.monotonic() - t0
+    assert res.get("ok") is False
+    assert elapsed < 60, f"search ran {elapsed:.1f}s despite the budget"
+
+
+def test_mortgage_payment_pro_rated_by_fraction():
+    """Regression: the MORTGAGE_PAID tracker used to record a FULL monthly
+    payment per hop while the cash paid was scaled by weeks/30, retiring the
+    mortgage ~4x too fast."""
+    m = planner.Mortgage(1_000_000, monthly_payment=10_000)
+    state = {}
+    total = sum(m.mortgage_payment(state, 7 / 30) for _ in range(4))  # ~1 month of weekly hops
+    assert round(total, 2) == round(state[planner.MORTGAGE_PAID], 2)
+    assert abs(total - 10_000 * 28 / 30) < 1  # cash paid, not four monthly payments
+
+    # and it never pays beyond the outstanding balance
+    small = planner.Mortgage(1_000, monthly_payment=10_000)
+    st = {}
+    assert small.mortgage_payment(st, 1.0) == 1_000
+    assert small.mortgage_payment(st, 1.0) == 0
+
+
+def test_zero_fuel_per_jump_ship_uses_configured_max_jump():
+    """Regression: fuel_per_jump defaults to 0 for a freshly added ship, which
+    used to make max_jump() divide by zero."""
+    ship = planner.build_ship({"name": "fresh ship"})
+    assert ship.max_jump() == 1
+    assert ship.cargo_capacity(2) == 0
+
+
+def test_passage_table_clamps_over_range_distances():
+    """Regression: passageFreight.json only covers 1-6 parsecs; an
+    over-range distance (big configured jump) used to KeyError."""
+    dl = planner.DataLoader(2, data_dir=os.path.join(REPO_ROOT, "data"),
+                            cache_dir=os.path.join(REPO_ROOT, "cache"))
+    assert dl.passage("middle", 9) == dl.passage("middle", 6)
+    assert dl.passage("freight", 3) == 2600
